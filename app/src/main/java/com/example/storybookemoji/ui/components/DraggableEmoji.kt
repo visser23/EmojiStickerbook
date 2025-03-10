@@ -2,7 +2,8 @@ package com.example.storybookemoji.ui.components
 
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -42,86 +43,73 @@ fun DraggableEmoji(
         emojiSticker.size * currentScale
     }
     
-    // Ensure emoji stays within screen bounds
-    val boundedPosition = remember(currentPosition, containerSize, emojiSize) {
-        Offset(
-            x = currentPosition.x.coerceIn(0f, (containerSize.x - emojiSize).coerceAtLeast(0f)),
-            y = currentPosition.y.coerceIn(0f, (containerSize.y - emojiSize).coerceAtLeast(0f))
-        )
+    // Create a transformable state for handling scale and rotation
+    val transformableState = rememberTransformableState { zoomChange, offsetChange, rotationChange ->
+        // Update scale with no upper limit
+        currentScale = (currentScale * zoomChange).coerceAtLeast(0.5f)
+        
+        // Update rotation
+        currentRotation += rotationChange
+        
+        // Also update position with the pan offset
+        val newX = (currentPosition.x + offsetChange.x).coerceIn(0f, (containerSize.x - emojiSize).coerceAtLeast(0f))
+        val newY = (currentPosition.y + offsetChange.y).coerceIn(0f, (containerSize.y - emojiSize).coerceAtLeast(0f))
+        currentPosition = Offset(newX, newY)
+        
+        // Debug output
+        println("Transform: scale=$currentScale, rotation=$currentRotation, position=$currentPosition")
     }
     
-    // Update current position if bounded position changed
-    LaunchedEffect(boundedPosition) {
-        if (boundedPosition != currentPosition) {
-            currentPosition = boundedPosition
-        }
+    // Update emoji sticker properties when they change
+    LaunchedEffect(currentScale, currentRotation, currentPosition) {
+        emojiSticker.scale = currentScale
+        emojiSticker.rotation = currentRotation
+        emojiSticker.position = currentPosition
+        onPositionChange(currentPosition)
     }
     
-    // For detecting different kinds of gestures
-    var gestureMode by remember { mutableStateOf(GestureMode.NONE) }
+    // Create a drag State that integrates with the transformable state
+    var wasDragging by remember { mutableStateOf(false) }
     
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .offset {
                 IntOffset(
-                    boundedPosition.x.roundToInt(),
-                    boundedPosition.y.roundToInt()
+                    currentPosition.x.roundToInt(),
+                    currentPosition.y.roundToInt()
                 )
             }
             .size(with(density) { emojiSize.toDp() })
             .rotate(currentRotation)
-            // Detect transform (pinch-to-zoom and rotation)
-            .pointerInput(Unit) {
-                detectTransformGestures { _, _, zoom, rotation ->
-                    if (gestureMode == GestureMode.NONE || gestureMode == GestureMode.TRANSFORM) {
-                        gestureMode = GestureMode.TRANSFORM
-                        
-                        // Update scale (zoom) - limit between 0.5 and 3.0
-                        currentScale = (currentScale * zoom).coerceIn(0.5f, 3.0f)
-                        
-                        // Update rotation (keep between 0 and 360 degrees)
-                        currentRotation = (currentRotation + rotation) % 360
-                        
-                        // Update the original emoji sticker with new values
-                        emojiSticker.scale = currentScale
-                        emojiSticker.rotation = currentRotation
-                        
-                        // Notify parent about the changes
-                        onPositionChange(currentPosition)
-                    }
-                }
-            }
-            // Detect drag (move)
+            // Use the high-level transformable modifier for scaling and rotation
+            .transformable(state = transformableState)
+            // Separate drag handling to improve reliability when no scaling is intended
             .pointerInput(Unit) {
                 detectDragGestures(
-                    onDragStart = { gestureMode = GestureMode.DRAG },
-                    onDragEnd = { 
-                        gestureMode = GestureMode.NONE
-                        // Ensure the original sticker position is updated
-                        emojiSticker.position = currentPosition
-                    },
-                    onDragCancel = { gestureMode = GestureMode.NONE },
+                    onDragStart = { wasDragging = true },
+                    onDragEnd = { wasDragging = false },
+                    onDragCancel = { wasDragging = false },
                     onDrag = { change, dragAmount ->
                         change.consume()
-                        if (gestureMode == GestureMode.DRAG) {
-                            // Update current position directly
-                            currentPosition = Offset(
-                                x = (currentPosition.x + dragAmount.x).coerceIn(0f, (containerSize.x - emojiSize).coerceAtLeast(0f)),
-                                y = (currentPosition.y + dragAmount.y).coerceIn(0f, (containerSize.y - emojiSize).coerceAtLeast(0f))
-                            )
-                            
-                            // Notify parent about the position change
-                            onPositionChange(currentPosition)
+                        if (!transformableState.isTransformInProgress) {
+                            // Only handle dragging when not transforming
+                            val newX = (currentPosition.x + dragAmount.x).coerceIn(0f, (containerSize.x - emojiSize).coerceAtLeast(0f))
+                            val newY = (currentPosition.y + dragAmount.y).coerceIn(0f, (containerSize.y - emojiSize).coerceAtLeast(0f))
+                            currentPosition = Offset(newX, newY)
                         }
                     }
                 )
             }
-            // Detect long press for deletion
+            // Separate long press detection for deletion
             .pointerInput(Unit) {
                 detectTapGestures(
+                    onPress = { /* Capture press but do nothing */ },
                     onLongPress = {
-                        onRemove()
+                        if (!wasDragging && !transformableState.isTransformInProgress) {
+                            onRemove()
+                            println("Long press detected - removing emoji")
+                        }
                     }
                 )
             }
@@ -132,12 +120,3 @@ fun DraggableEmoji(
         )
     }
 }
-
-/**
- * Enum to track the current gesture mode to avoid conflicts
- */
-private enum class GestureMode {
-    NONE,
-    DRAG,
-    TRANSFORM
-} 

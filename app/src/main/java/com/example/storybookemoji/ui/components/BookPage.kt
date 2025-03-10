@@ -40,7 +40,14 @@ fun BookPage(
     var containerSize by remember { mutableStateOf(Offset.Zero) }
     
     // Force recomposition when stickers change
-    val stickersCount = remember { derivedStateOf { pageData.emojiStickers.size } }
+    val stickers by remember(pageData.id, pageData.emojiStickers.size) { 
+        derivedStateOf { pageData.emojiStickers.toList() } 
+    }
+    
+    // Debug log to verify stickers
+    LaunchedEffect(stickers.size) {
+        println("Page ${pageData.id} has ${stickers.size} stickers")
+    }
     
     Box(
         modifier = Modifier
@@ -63,7 +70,7 @@ fun BookPage(
             }
     ) {
         // Render all stickers on this page with a key to force proper recomposition
-        pageData.emojiStickers.forEachIndexed { index, sticker ->
+        stickers.forEach { sticker ->
             key(sticker.id) {
                 DraggableEmoji(
                     emojiSticker = sticker,
