@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.storybookemoji.model.EmojiSticker
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -69,6 +70,15 @@ fun DraggableEmoji(
     // Track multi-touch state
     var touchPoints by remember { mutableStateOf(listOf<Offset>()) }
     
+    // Define edge threshold for page turning (% of screen width)
+    val edgeThresholdPercent = 0.15f
+    val edgeThresholdPx = containerSize.x * edgeThresholdPercent
+    
+    // Function to check if a touch is near the edge (for page turning)
+    val isNearEdge = { position: Offset ->
+        position.x < edgeThresholdPx || position.x > containerSize.x - edgeThresholdPx
+    }
+    
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -84,13 +94,20 @@ fun DraggableEmoji(
             // Simple drag handling
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    // Update position with bounds check
-                    val newPosition = Offset(
-                        x = (currentPosition.x + dragAmount.x).coerceIn(0f, (containerSize.x - emojiSize).coerceAtLeast(0f)),
-                        y = (currentPosition.y + dragAmount.y).coerceIn(0f, (containerSize.y - emojiSize).coerceAtLeast(0f))
-                    )
-                    currentPosition = newPosition
+                    // Check if the drag is primarily horizontal and near the edge
+                    val isHorizontalEdgeSwipe = abs(dragAmount.x) > abs(dragAmount.y) && 
+                                               isNearEdge(change.position)
+                    
+                    // Only consume if not a potential page turn gesture
+                    if (!isHorizontalEdgeSwipe) {
+                        change.consume()
+                        // Update position with bounds check
+                        val newPosition = Offset(
+                            x = (currentPosition.x + dragAmount.x).coerceIn(0f, (containerSize.x - emojiSize).coerceAtLeast(0f)),
+                            y = (currentPosition.y + dragAmount.y).coerceIn(0f, (containerSize.y - emojiSize).coerceAtLeast(0f))
+                        )
+                        currentPosition = newPosition
+                    }
                 }
             }
             // Custom multi-touch handling for scaling
@@ -105,49 +122,55 @@ fun DraggableEmoji(
                             val firstPointer = pointers[0].position
                             val secondPointer = pointers[1].position
                             
-                            // Calculate distance between pointers
-                            val currentDistance = hypot(
-                                secondPointer.x - firstPointer.x,
-                                secondPointer.y - firstPointer.y
-                            )
+                            // Check if both pointers are near edges (potential page turn)
+                            val bothNearEdge = isNearEdge(firstPointer) && isNearEdge(secondPointer)
                             
-                            // If we have previous points, calculate scaling
-                            if (touchPoints.size == 2) {
-                                val previousDistance = hypot(
-                                    touchPoints[1].x - touchPoints[0].x,
-                                    touchPoints[1].y - touchPoints[0].y
+                            // Only handle if not a potential page turn gesture
+                            if (!bothNearEdge) {
+                                // Calculate distance between pointers
+                                val currentDistance = hypot(
+                                    secondPointer.x - firstPointer.x,
+                                    secondPointer.y - firstPointer.y
                                 )
                                 
-                                // Calculate zoom factor
-                                if (previousDistance > 0) {
-                                    val zoomFactor = currentDistance / previousDistance
-                                    
-                                    // Apply scaling with minimum limit
-                                    currentScale = (currentScale * zoomFactor).coerceAtLeast(0.5f)
-                                    println("Scale changed to: $currentScale")
-                                    
-                                    // Calculate rotation change
-                                    val previousAngle = atan2(
-                                        touchPoints[1].y - touchPoints[0].y,
-                                        touchPoints[1].x - touchPoints[0].x
+                                // If we have previous points, calculate scaling
+                                if (touchPoints.size == 2) {
+                                    val previousDistance = hypot(
+                                        touchPoints[1].x - touchPoints[0].x,
+                                        touchPoints[1].y - touchPoints[0].y
                                     )
-                                    val currentAngle = atan2(
-                                        secondPointer.y - firstPointer.y,
-                                        secondPointer.x - firstPointer.x
-                                    )
-                                    val angleChange = (currentAngle - previousAngle) * (180f / PI.toFloat())
                                     
-                                    // Apply rotation
-                                    currentRotation = (currentRotation + angleChange) % 360
-                                    println("Rotation changed to: $currentRotation")
+                                    // Calculate zoom factor
+                                    if (previousDistance > 0) {
+                                        val zoomFactor = currentDistance / previousDistance
+                                        
+                                        // Apply scaling with minimum limit
+                                        currentScale = (currentScale * zoomFactor).coerceAtLeast(0.5f)
+                                        println("Scale changed to: $currentScale")
+                                        
+                                        // Calculate rotation change
+                                        val previousAngle = atan2(
+                                            touchPoints[1].y - touchPoints[0].y,
+                                            touchPoints[1].x - touchPoints[0].x
+                                        )
+                                        val currentAngle = atan2(
+                                            secondPointer.y - firstPointer.y,
+                                            secondPointer.x - firstPointer.x
+                                        )
+                                        val angleChange = (currentAngle - previousAngle) * (180f / PI.toFloat())
+                                        
+                                        // Apply rotation
+                                        currentRotation = (currentRotation + angleChange) % 360
+                                        println("Rotation changed to: $currentRotation")
+                                    }
                                 }
+                                
+                                // Update touch points for next calculation
+                                touchPoints = listOf(firstPointer, secondPointer)
+                                
+                                // Consume all changes
+                                pointers.forEach { it.consume() }
                             }
-                            
-                            // Update touch points for next calculation
-                            touchPoints = listOf(firstPointer, secondPointer)
-                            
-                            // Consume all changes
-                            pointers.forEach { it.consume() }
                         } else if (pointers.isEmpty()) {
                             // Reset touch points when all fingers are lifted
                             touchPoints = emptyList()
@@ -159,8 +182,11 @@ fun DraggableEmoji(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onLongPress = {
-                        onRemove()
-                        println("Long press detected - removing emoji")
+                        // Only handle long press if not near edge
+                        if (!isNearEdge(it)) {
+                            onRemove()
+                            println("Long press detected - removing emoji")
+                        }
                     }
                 )
             }
