@@ -156,99 +156,60 @@ fun BookScreen() {
         }
     }
     
-    Scaffold(
-        topBar = {
-            SmallTopAppBar(
-                title = { Text("Emoji Sticker Book") },
-                colors = TopAppBarDefaults.smallTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                actions = {
-                    // Clear current page button
-                    IconButton(onClick = clearCurrentPage) {
-                        Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = "Clear Current Page"
-                        )
-                    }
-                    
-                    // Add new page button
-                    IconButton(onClick = addNewPage) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Add New Page"
-                        )
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        Column(modifier = Modifier.padding(paddingValues)) {
-            // Page indicator (current/total)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = "Page ${pagerState.currentPage + 1} of ${pages.size}",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
+    // Use a simple Box instead of Scaffold to make pages fill the entire screen
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(color = androidx.compose.ui.graphics.Color.Black)
+    ) {
+        // Main pager - now fills the entire screen
+        HorizontalPager(
+            pageCount = pages.size,
+            state = pagerState,
+            flingBehavior = pagerFlingBehavior,
+            modifier = Modifier.fillMaxSize(),
+            key = { index -> pages[index].id },
+            // Keep more pages in memory to preserve state when navigating
+            beyondBoundsPageCount = 3
+        ) { pageIndex ->
+            // Remember the page data to maintain state
+            val pageData = remember(pages[pageIndex].id) { pages[pageIndex] }
             
-            // Main pager
-            HorizontalPager(
-                pageCount = pages.size,
-                state = pagerState,
-                flingBehavior = pagerFlingBehavior,
-                modifier = Modifier.fillMaxSize(),
-                key = { index -> pages[index].id },
-                // Keep more pages in memory to preserve state when navigating
-                beyondBoundsPageCount = 3
-            ) { pageIndex ->
-                // Remember the page data to maintain state
-                val pageData = remember(pages[pageIndex].id) { pages[pageIndex] }
+            // Wrap content in Box - now fills the entire screen
+            Box(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // Display the page content
+                BookPage(
+                    pageData = pageData,
+                    onAddSticker = { emoji, position ->
+                        addStickerToPage(emoji, position, pageIndex)
+                    },
+                    onUpdateSticker = { sticker ->
+                        updateStickerOnPage(sticker, pageIndex)
+                        // Force recomposition of the page
+                        pages[pageIndex] = pages[pageIndex].copy()
+                    },
+                    onRemoveSticker = { sticker ->
+                        removeStickerFromPage(sticker, pageIndex)
+                        // Force recomposition of the page
+                        pages[pageIndex] = pages[pageIndex].copy()
+                    }
+                )
                 
-                // Wrap content in Box
-                Box(
+                // Keep only the small page number indicator at bottom right
+                Text(
+                    text = "${pageIndex + 1}",
+                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier
-                        .fillMaxSize()
+                        .align(Alignment.BottomEnd)
                         .padding(8.dp)
-                ) {
-                    // Display the page content
-                    BookPage(
-                        pageData = pageData,
-                        onAddSticker = { emoji, position ->
-                            addStickerToPage(emoji, position, pageIndex)
-                        },
-                        onUpdateSticker = { sticker ->
-                            updateStickerOnPage(sticker, pageIndex)
-                            // Force recomposition of the page
-                            pages[pageIndex] = pages[pageIndex].copy()
-                        },
-                        onRemoveSticker = { sticker ->
-                            removeStickerFromPage(sticker, pageIndex)
-                            // Force recomposition of the page
-                            pages[pageIndex] = pages[pageIndex].copy()
-                        }
-                    )
-                    
-                    // Display page number indicator at bottom right
-                    Text(
-                        text = "${pageIndex + 1}",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(8.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                                shape = MaterialTheme.shapes.small
-                            )
-                            .padding(4.dp)
-                    )
-                }
+                        .background(
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                            shape = MaterialTheme.shapes.small
+                        )
+                        .padding(4.dp)
+                )
             }
         }
     }
