@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Emoji Sticker Book</string>
+    <string name="previous_page">Previous Page</string>
+    <string name="next_page">Next Page</string>
+    <string name="clear_page">Clear Page</string>
+    <string name="choose_emoji">Choose an Emoji</string>
+    <string name="page_indicator">Page %1$d of %2$d</string>
+</resources> 
