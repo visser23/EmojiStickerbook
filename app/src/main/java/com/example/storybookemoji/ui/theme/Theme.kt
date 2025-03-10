@@ -33,7 +33,7 @@ private val DarkColorScheme = darkColorScheme(
 
 @Composable
 fun StoryBookEmojiTheme(
-    darkTheme: Boolean = false, // Default to light theme for children's app
+    darkTheme: Boolean = true, // Changed to default to dark theme for black background
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = false, // Default to static colors for more vibrant children's app
     content: @Composable () -> Unit
@@ -50,8 +50,8 @@ fun StoryBookEmojiTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.primary.toArgb()
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            window.statusBarColor = androidx.compose.ui.graphics.Color.Black.toArgb()
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
     }
 
