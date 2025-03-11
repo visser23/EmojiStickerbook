@@ -3,12 +3,21 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// Load keystore properties from a separate file that is not committed to version control
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+} else {
+    System.err.println("Warning: keystore.properties file not found! Release builds will not be signed properly.")
+}
+
 android {
-    namespace 'com.example.storybookemoji'
+    namespace 'io.github.storybookemoji'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.example.storybookemoji"
+        applicationId "io.github.storybookemoji"
         minSdk 21
         targetSdk 34
         versionCode 1
@@ -20,13 +29,45 @@ android {
         }
     }
 
-    buildTypes {
+    // Add signing configuration for release builds
+    signingConfigs {
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.debug
+            // Use properties from keystore.properties file
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
         }
     }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+    }
+
+    // Enable bundle configuration
+    bundle {
+        language {
+            enableSplit = true
+        }
+        density {
+            enableSplit = true
+        }
+        abi {
+            enableSplit = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8

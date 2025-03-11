@@ -12,10 +12,31 @@
 #   public *;
 #}
 
+# Keep your application class
+-keep class io.github.storybookemoji.StoryBookEmojiApplication { *; }
+
+# Keep model classes
+-keep class io.github.storybookemoji.model.** { *; }
+
+# Compose rules
+-keepclasseswithmembers class * {
+    @androidx.compose.ui.tooling.preview.Preview <methods>;
+}
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+-keepattributes SourceFile,LineNumberTable
 
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Kotlin serialization
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
+
+# Emoji2
+-keep class androidx.emoji2.** { *; }
+
+# Material3
+-keep class androidx.compose.material3.** { *; }
