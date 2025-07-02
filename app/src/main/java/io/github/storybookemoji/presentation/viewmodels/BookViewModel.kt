@@ -116,7 +116,7 @@ class BookViewModel {
         pageHeight: Float,
         stickerSize: Float
     ): Offset {
-        return manageStickersUseCase.validateStickerPosition(
+        return manageStickersUseCase.clampStickerPosition(
             position = position,
             pageWidth = pageWidth,
             pageHeight = pageHeight,

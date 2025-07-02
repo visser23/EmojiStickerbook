@@ -2,6 +2,7 @@ package io.github.storybookemoji.model
 
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 
 /**
  * Represents a page in the sticker book with immutable state
@@ -46,6 +47,26 @@ data class PageData(
      */
     fun findStickerById(id: Long): EmojiSticker? = 
         emojiStickers.find { it.id == id }
+
+    /**
+     * Finds a sticker at the specified position with tolerance
+     */
+    fun findStickerAt(position: Offset, tolerance: Float = 50f): EmojiSticker? {
+        // Return the topmost sticker (last in the list) that contains the point
+        return emojiStickers.lastOrNull { sticker ->
+            sticker.containsPoint(position, tolerance)
+        }
+    }
+    
+    /**
+     * Returns the number of stickers on this page
+     */
+    fun getStickerCount(): Int = emojiStickers.size
+    
+    /**
+     * Checks if the page has no stickers
+     */
+    fun isEmpty(): Boolean = emojiStickers.isEmpty()
 }
 
 /**

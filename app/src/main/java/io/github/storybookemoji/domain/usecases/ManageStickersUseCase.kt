@@ -25,7 +25,7 @@ class ManageStickersUseCase {
             id = System.currentTimeMillis(),
             emoji = emoji,
             position = position,
-            scale = 3.0f,
+            scale = 1.0f,
             rotation = 0f
         )
         
@@ -87,9 +87,9 @@ class ManageStickersUseCase {
     }
     
     /**
-     * Validates sticker position within page bounds
+     * Clamps sticker position within page bounds
      */
-    fun validateStickerPosition(
+    fun clampStickerPosition(
         position: Offset,
         pageWidth: Float,
         pageHeight: Float,
@@ -100,5 +100,93 @@ class ManageStickersUseCase {
             x = position.x.coerceIn(halfSize, pageWidth - halfSize),
             y = position.y.coerceIn(halfSize, pageHeight - halfSize)
         )
+    }
+    
+    /**
+     * Updates the position of an existing sticker
+     */
+    fun updateStickerPosition(
+        bookState: BookState,
+        stickerId: Long,
+        newPosition: Offset,
+        pageIndex: Int
+    ): BookState {
+        val page = bookState.pages.getOrNull(pageIndex) ?: return bookState
+        val sticker = page.findStickerById(stickerId) ?: return bookState
+        
+        if (!validateStickerPosition(newPosition)) {
+            return bookState
+        }
+        
+        val updatedSticker = sticker.withPosition(newPosition)
+        val updatedPage = page.withUpdatedSticker(updatedSticker)
+        
+        return bookState.withUpdatedPage(pageIndex, updatedPage)
+    }
+    
+    /**
+     * Updates the scale of an existing sticker
+     */
+    fun updateStickerScale(
+        bookState: BookState,
+        stickerId: Long,
+        newScale: Float,
+        pageIndex: Int
+    ): BookState {
+        val page = bookState.pages.getOrNull(pageIndex) ?: return bookState
+        val sticker = page.findStickerById(stickerId) ?: return bookState
+        
+        val updatedSticker = sticker.withScale(newScale) // withScale handles clamping
+        val updatedPage = page.withUpdatedSticker(updatedSticker)
+        
+        return bookState.withUpdatedPage(pageIndex, updatedPage)
+    }
+    
+    /**
+     * Updates the rotation of an existing sticker
+     */
+    fun updateStickerRotation(
+        bookState: BookState,
+        stickerId: Long,
+        newRotation: Float,
+        pageIndex: Int
+    ): BookState {
+        val page = bookState.pages.getOrNull(pageIndex) ?: return bookState
+        val sticker = page.findStickerById(stickerId) ?: return bookState
+        
+        val updatedSticker = sticker.withRotation(newRotation)
+        val updatedPage = page.withUpdatedSticker(updatedSticker)
+        
+        return bookState.withUpdatedPage(pageIndex, updatedPage)
+    }
+    
+    /**
+     * Finds a sticker at the specified position
+     */
+    fun findStickerAtPosition(
+        bookState: BookState,
+        position: Offset,
+        pageIndex: Int,
+        tolerance: Float = 50f
+    ): EmojiSticker? {
+        val page = bookState.pages.getOrNull(pageIndex) ?: return null
+        return page.findStickerAt(position, tolerance)
+    }
+    
+    /**
+     * Validates that a sticker position is within reasonable bounds
+     */
+    fun validateStickerPosition(
+        position: Offset,
+        pageWidth: Float = 1000f,  // Default reasonable page size
+        pageHeight: Float = 1000f, // Default reasonable page size  
+        stickerSize: Float = 80f   // Default sticker size
+    ): Boolean {
+        return position.x.isFinite() && 
+               position.y.isFinite() && 
+               position.x >= 0f && 
+               position.y >= 0f &&
+               position.x <= pageWidth &&
+               position.y <= pageHeight
     }
 } 

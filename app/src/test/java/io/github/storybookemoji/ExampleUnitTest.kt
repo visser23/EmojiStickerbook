@@ -1,4 +1,4 @@
-package com.example.storybookemoji
+package io.github.storybookemoji
 
 import org.junit.Test
 
