@@ -21,11 +21,22 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Performance optimizations for release
+            isDebuggable = false
+            isJniDebuggable = false
+            renderscriptOptimLevel = 3
+        }
+        debug {
+            isMinifyEnabled = false
+            isDebuggable = true
+            // Keep debug symbols for development
+            applicationIdSuffix = ".debug"
         }
     }
     compileOptions {

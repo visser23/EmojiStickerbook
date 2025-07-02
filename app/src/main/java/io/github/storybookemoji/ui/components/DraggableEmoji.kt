@@ -12,7 +12,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -26,7 +25,8 @@ import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 /**
- * A draggable emoji component that can be moved, scaled, and rotated
+ * A performance-optimized draggable emoji component
+ * Minimizes recompositions and memory allocations
  */
 @Composable
 fun DraggableEmoji(
@@ -37,47 +37,54 @@ fun DraggableEmoji(
 ) {
     val density = LocalDensity.current
     
-    // Track current properties with state to ensure recomposition
-    var currentScale by remember { mutableStateOf(emojiSticker.scale) }
-    var currentRotation by remember { mutableStateOf(emojiSticker.rotation) }
-    var currentPosition by remember { mutableStateOf(emojiSticker.position) }
-    
-    // Get the current size based on scale
-    val emojiSize = remember(currentScale) { 
-        emojiSticker.size * currentScale
-    }
-    
-    // Add padding to prevent cutoff (50% extra space)
-    val paddingFactor = 1.5f
-    val displaySize = with(density) { (emojiSize * paddingFactor).toDp() }
-    
-    // Ensure emoji stays within screen bounds
-    val boundedPosition = remember(currentPosition, containerSize, emojiSize) {
-        Offset(
-            x = currentPosition.x.coerceIn(0f, (containerSize.x - emojiSize).coerceAtLeast(0f)),
-            y = currentPosition.y.coerceIn(0f, (containerSize.y - emojiSize).coerceAtLeast(0f))
+    // Consolidate state into a single data class to reduce recompositions
+    var transformState by remember {
+        mutableStateOf(
+            TransformState(
+                position = emojiSticker.position,
+                scale = emojiSticker.scale,
+                rotation = emojiSticker.rotation
+            )
         )
     }
     
-    // Update emoji sticker properties when they change
-    LaunchedEffect(currentScale, currentRotation, currentPosition) {
-        emojiSticker.scale = currentScale
-        emojiSticker.rotation = currentRotation
-        emojiSticker.position = currentPosition
-        onPositionChange(currentPosition)
+    // Cache expensive calculations
+    val emojiSize = remember(transformState.scale) { 
+        emojiSticker.size * transformState.scale
     }
     
-    // Track multi-touch state
-    var touchPoints by remember { mutableStateOf(listOf<Offset>()) }
-    
-    // Define edge threshold for page turning (% of screen width)
-    val edgeThresholdPercent = 0.15f
-    val edgeThresholdPx = containerSize.x * edgeThresholdPercent
-    
-    // Function to check if a touch is near the edge (for page turning)
-    val isNearEdge = { position: Offset ->
-        position.x < edgeThresholdPx || position.x > containerSize.x - edgeThresholdPx
+    val displaySize = remember(emojiSize, density) { 
+        with(density) { (emojiSize * 1.5f).toDp() }
     }
+    
+    // Optimize bounds calculation
+    val boundedPosition = remember(transformState.position, containerSize, emojiSize) {
+        val maxX = (containerSize.x - emojiSize).coerceAtLeast(0f)
+        val maxY = (containerSize.y - emojiSize).coerceAtLeast(0f)
+        Offset(
+            x = transformState.position.x.coerceIn(0f, maxX),
+            y = transformState.position.y.coerceIn(0f, maxY)
+        )
+    }
+    
+    // Update sticker properties only when necessary
+    LaunchedEffect(transformState) {
+        emojiSticker.scale = transformState.scale
+        emojiSticker.rotation = transformState.rotation
+        emojiSticker.position = transformState.position
+        onPositionChange(transformState.position)
+    }
+    
+    // Cache edge detection calculations
+    val edgeThresholdPx = remember(containerSize) { containerSize.x * 0.15f }
+    val isNearEdge = remember(edgeThresholdPx) { 
+        { position: Offset ->
+            position.x < edgeThresholdPx || position.x > containerSize.x - edgeThresholdPx
+        }
+    }
+    
+    // Multi-touch state for scaling/rotation
+    var touchPoints by remember { mutableStateOf(emptyList<Offset>()) }
     
     Box(
         contentAlignment = Alignment.Center,
@@ -88,104 +95,91 @@ fun DraggableEmoji(
                     boundedPosition.y.roundToInt()
                 )
             }
-            // Use larger size with padding to prevent cutoff
             .size(displaySize)
-            .rotate(currentRotation)
-            // Simple drag handling
-            .pointerInput(Unit) {
+            .rotate(transformState.rotation)
+            // Optimized drag handling
+            .pointerInput(containerSize, emojiSize) {
                 detectDragGestures { change, dragAmount ->
-                    // Check if the drag is primarily horizontal and near the edge
                     val isHorizontalEdgeSwipe = abs(dragAmount.x) > abs(dragAmount.y) && 
                                                isNearEdge(change.position)
                     
-                    // Only consume if not a potential page turn gesture
                     if (!isHorizontalEdgeSwipe) {
                         change.consume()
-                        // Update position with bounds check
-                        val newPosition = Offset(
-                            x = (currentPosition.x + dragAmount.x).coerceIn(0f, (containerSize.x - emojiSize).coerceAtLeast(0f)),
-                            y = (currentPosition.y + dragAmount.y).coerceIn(0f, (containerSize.y - emojiSize).coerceAtLeast(0f))
+                        val maxX = (containerSize.x - emojiSize).coerceAtLeast(0f)
+                        val maxY = (containerSize.y - emojiSize).coerceAtLeast(0f)
+                        
+                        transformState = transformState.copy(
+                            position = Offset(
+                                x = (transformState.position.x + dragAmount.x).coerceIn(0f, maxX),
+                                y = (transformState.position.y + dragAmount.y).coerceIn(0f, maxY)
+                            )
                         )
-                        currentPosition = newPosition
                     }
                 }
             }
-            // Custom multi-touch handling for scaling
-            .pointerInput(Unit) {
+            // Optimized multi-touch handling
+            .pointerInput(containerSize) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
                         val pointers = event.changes.filter { it.pressed }
                         
-                        // Handle scaling with two fingers
-                        if (pointers.size == 2) {
-                            val firstPointer = pointers[0].position
-                            val secondPointer = pointers[1].position
-                            
-                            // Check if both pointers are near edges (potential page turn)
-                            val bothNearEdge = isNearEdge(firstPointer) && isNearEdge(secondPointer)
-                            
-                            // Only handle if not a potential page turn gesture
-                            if (!bothNearEdge) {
-                                // Calculate distance between pointers
-                                val currentDistance = hypot(
-                                    secondPointer.x - firstPointer.x,
-                                    secondPointer.y - firstPointer.y
-                                )
+                        when (pointers.size) {
+                            2 -> {
+                                val firstPointer = pointers[0].position
+                                val secondPointer = pointers[1].position
                                 
-                                // If we have previous points, calculate scaling
-                                if (touchPoints.size == 2) {
-                                    val previousDistance = hypot(
-                                        touchPoints[1].x - touchPoints[0].x,
-                                        touchPoints[1].y - touchPoints[0].y
+                                if (!isNearEdge(firstPointer) || !isNearEdge(secondPointer)) {
+                                    val currentDistance = hypot(
+                                        secondPointer.x - firstPointer.x,
+                                        secondPointer.y - firstPointer.y
                                     )
                                     
-                                    // Calculate zoom factor
-                                    if (previousDistance > 0) {
-                                        val zoomFactor = currentDistance / previousDistance
-                                        
-                                        // Apply scaling with minimum limit
-                                        currentScale = (currentScale * zoomFactor).coerceAtLeast(0.5f)
-                                        println("Scale changed to: $currentScale")
-                                        
-                                        // Calculate rotation change
-                                        val previousAngle = atan2(
-                                            touchPoints[1].y - touchPoints[0].y,
-                                            touchPoints[1].x - touchPoints[0].x
+                                    if (touchPoints.size == 2) {
+                                        val previousDistance = hypot(
+                                            touchPoints[1].x - touchPoints[0].x,
+                                            touchPoints[1].y - touchPoints[0].y
                                         )
-                                        val currentAngle = atan2(
-                                            secondPointer.y - firstPointer.y,
-                                            secondPointer.x - firstPointer.x
-                                        )
-                                        val angleChange = (currentAngle - previousAngle) * (180f / PI.toFloat())
                                         
-                                        // Apply rotation
-                                        currentRotation = (currentRotation + angleChange) % 360
-                                        println("Rotation changed to: $currentRotation")
+                                        if (previousDistance > 0) {
+                                            val zoomFactor = currentDistance / previousDistance
+                                            val newScale = (transformState.scale * zoomFactor)
+                                                .coerceIn(EmojiSticker.MIN_SCALE, EmojiSticker.MAX_SCALE)
+                                            
+                                            // Calculate rotation
+                                            val previousAngle = atan2(
+                                                touchPoints[1].y - touchPoints[0].y,
+                                                touchPoints[1].x - touchPoints[0].x
+                                            )
+                                            val currentAngle = atan2(
+                                                secondPointer.y - firstPointer.y,
+                                                secondPointer.x - firstPointer.x
+                                            )
+                                            val angleChange = (currentAngle - previousAngle) * (180f / PI.toFloat())
+                                            val newRotation = (transformState.rotation + angleChange) % 360
+                                            
+                                            transformState = transformState.copy(
+                                                scale = newScale,
+                                                rotation = newRotation
+                                            )
+                                        }
                                     }
+                                    
+                                    touchPoints = listOf(firstPointer, secondPointer)
+                                    pointers.forEach { it.consume() }
                                 }
-                                
-                                // Update touch points for next calculation
-                                touchPoints = listOf(firstPointer, secondPointer)
-                                
-                                // Consume all changes
-                                pointers.forEach { it.consume() }
                             }
-                        } else if (pointers.isEmpty()) {
-                            // Reset touch points when all fingers are lifted
-                            touchPoints = emptyList()
+                            0 -> touchPoints = emptyList()
                         }
                     }
                 }
             }
-            // Handle long press for deletion
+            // Long press for deletion
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onLongPress = {
-                        // Only handle long press if not near edge
-                        if (!isNearEdge(it)) {
+                    onLongPress = { position ->
+                        if (!isNearEdge(position)) {
                             onRemove()
-                            println("Long press detected - removing emoji")
                         }
                     }
                 )
@@ -193,9 +187,19 @@ fun DraggableEmoji(
     ) {
         Text(
             text = emojiSticker.emoji,
-            fontSize = with(density) { (emojiSize * 0.8f).toSp() },
-            // Add padding to ensure text has room to display
+            fontSize = remember(emojiSize, density) { 
+                with(density) { (emojiSize * 0.8f).toSp() }
+            },
             modifier = Modifier.padding(8.dp)
         )
     }
 }
+
+/**
+ * Consolidated transform state to minimize recompositions
+ */
+private data class TransformState(
+    val position: Offset,
+    val scale: Float,
+    val rotation: Float
+)

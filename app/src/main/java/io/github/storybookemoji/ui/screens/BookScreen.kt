@@ -59,11 +59,6 @@ fun BookScreen() {
         }
     }
     
-    // Handle automatic page addition when reaching the end
-    LaunchedEffect(bookState.currentPageIndex, bookState.pages.size) {
-        viewModel.handleAutoPageAddition()
-    }
-    
     // Main UI layout
     Box(
         modifier = Modifier

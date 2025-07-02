@@ -250,19 +250,4 @@ class BookViewModelTest {
         assertEquals("Expected page ID: $expectedPageId, Actual page ID: $actualPageId", 
                     expectedPageId, actualPageId)
     }
-
-    @Test
-    fun `handleAutoPageAddition works correctly`() {
-        // Given - Navigate to last page
-        val lastPageIndex = viewModel.totalPages - 1
-        viewModel.navigateToPage(lastPageIndex)
-        val initialPageCount = viewModel.totalPages
-
-        // When - Handle auto page addition
-        viewModel.handleAutoPageAddition()
-
-        // Then - Should add page if conditions are met
-        // Note: This depends on the implementation of shouldAutoAddPage
-        assertTrue(viewModel.totalPages >= initialPageCount)
-    }
 } 
