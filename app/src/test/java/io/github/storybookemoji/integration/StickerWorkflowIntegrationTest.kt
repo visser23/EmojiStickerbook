@@ -22,7 +22,7 @@ class StickerWorkflowIntegrationTest {
 
     @Before
     fun setUp() {
-        viewModel = BookViewModel()
+        viewModel = BookViewModel(testMode = true)
         manageStickersUseCase = ManageStickersUseCase()
         navigatePagesUseCase = NavigatePagesUseCase()
     }

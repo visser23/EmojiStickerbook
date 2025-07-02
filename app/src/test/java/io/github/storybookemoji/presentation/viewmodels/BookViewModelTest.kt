@@ -16,7 +16,7 @@ class BookViewModelTest {
 
     @Before
     fun setUp() {
-        viewModel = BookViewModel()
+        viewModel = BookViewModel(testMode = true) // Enable test mode for synchronous behavior
     }
 
     @Test

@@ -13,12 +13,16 @@ import io.github.storybookemoji.model.EmojiSticker
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runBlocking
 
 /**
  * Performance-optimized ViewModel for managing the sticker book state
  * Includes memory monitoring and efficient state management
+ * Supports both async (production) and sync (testing) modes
  */
-class BookViewModel : ViewModel() {
+class BookViewModel(
+    private val testMode: Boolean = false // For testing synchronous behavior
+) : ViewModel() {
     
     // Use cases for business logic
     private val manageStickersUseCase = ManageStickersUseCase()
@@ -44,37 +48,66 @@ class BookViewModel : ViewModel() {
     
     /**
      * Performance-optimized sticker addition with memory management
+     * Uses async processing in production, sync in testing
      */
     fun addSticker(emoji: String, position: Offset, pageIndex: Int) {
-        viewModelScope.launch(Dispatchers.Default) {
-            try {
-                // Check memory usage periodically
-                checkMemoryUsage()
-                
-                val validatedPosition = validateStickerPosition(
-                    position = position,
-                    pageWidth = 1080f, // Standard screen width
-                    pageHeight = 1920f, // Standard screen height  
-                    stickerSize = EmojiSticker.DEFAULT_SIZE_DP.toFloat()
-                )
-                
-                val newBookState = manageStickersUseCase.addStickerToPage(
-                    bookState = bookState,
-                    emoji = emoji,
-                    position = validatedPosition,
-                    pageIndex = pageIndex
-                )
-                
-                // Update state on main thread
-                withContext(Dispatchers.Main) {
-                    bookState = newBookState
+        if (testMode) {
+            // Synchronous execution for tests
+            addStickerSync(emoji, position, pageIndex)
+        } else {
+            // Asynchronous execution for production performance
+            viewModelScope.launch(Dispatchers.Default) {
+                try {
+                    checkMemoryUsage()
+                    
+                    val validatedPosition = validateStickerPosition(
+                        position = position,
+                        pageWidth = 1080f,
+                        pageHeight = 1920f,
+                        stickerSize = EmojiSticker.DEFAULT_SIZE_DP.toFloat()
+                    )
+                    
+                    val newBookState = manageStickersUseCase.addStickerToPage(
+                        bookState = bookState,
+                        emoji = emoji,
+                        position = validatedPosition,
+                        pageIndex = pageIndex
+                    )
+                    
+                    withContext(Dispatchers.Main) {
+                        bookState = newBookState
+                    }
+                    
+                    operationCount++
+                } catch (e: Exception) {
+                    handleError("addSticker", e)
                 }
-                
-                operationCount++
-            } catch (e: Exception) {
-                // Handle errors gracefully without crashing
-                handleError("addSticker", e)
             }
+        }
+    }
+    
+    /**
+     * Synchronous version for testing
+     */
+    private fun addStickerSync(emoji: String, position: Offset, pageIndex: Int) {
+        try {
+            val validatedPosition = validateStickerPosition(
+                position = position,
+                pageWidth = 1080f,
+                pageHeight = 1920f,
+                stickerSize = EmojiSticker.DEFAULT_SIZE_DP.toFloat()
+            )
+            
+            bookState = manageStickersUseCase.addStickerToPage(
+                bookState = bookState,
+                emoji = emoji,
+                position = validatedPosition,
+                pageIndex = pageIndex
+            )
+            
+            operationCount++
+        } catch (e: Exception) {
+            handleError("addSticker", e)
         }
     }
     
@@ -82,21 +115,32 @@ class BookViewModel : ViewModel() {
      * Performance-optimized sticker update
      */
     fun updateSticker(updatedSticker: EmojiSticker, pageIndex: Int) {
-        viewModelScope.launch(Dispatchers.Default) {
-            try {
-                val newBookState = manageStickersUseCase.updateStickerOnPage(
-                    bookState = bookState,
-                    updatedSticker = updatedSticker,
-                    pageIndex = pageIndex
-                )
-                
-                withContext(Dispatchers.Main) {
-                    bookState = newBookState
+        if (testMode) {
+            // Synchronous execution for tests
+            bookState = manageStickersUseCase.updateStickerOnPage(
+                bookState = bookState,
+                updatedSticker = updatedSticker,
+                pageIndex = pageIndex
+            )
+            operationCount++
+        } else {
+            // Asynchronous execution for production
+            viewModelScope.launch(Dispatchers.Default) {
+                try {
+                    val newBookState = manageStickersUseCase.updateStickerOnPage(
+                        bookState = bookState,
+                        updatedSticker = updatedSticker,
+                        pageIndex = pageIndex
+                    )
+                    
+                    withContext(Dispatchers.Main) {
+                        bookState = newBookState
+                    }
+                    
+                    operationCount++
+                } catch (e: Exception) {
+                    handleError("updateSticker", e)
                 }
-                
-                operationCount++
-            } catch (e: Exception) {
-                handleError("updateSticker", e)
             }
         }
     }
@@ -105,21 +149,32 @@ class BookViewModel : ViewModel() {
      * Performance-optimized sticker removal
      */
     fun removeSticker(stickerId: Long, pageIndex: Int) {
-        viewModelScope.launch(Dispatchers.Default) {
-            try {
-                val newBookState = manageStickersUseCase.removeStickerFromPage(
-                    bookState = bookState,
-                    stickerId = stickerId,
-                    pageIndex = pageIndex
-                )
-                
-                withContext(Dispatchers.Main) {
-                    bookState = newBookState
+        if (testMode) {
+            // Synchronous execution for tests
+            bookState = manageStickersUseCase.removeStickerFromPage(
+                bookState = bookState,
+                stickerId = stickerId,
+                pageIndex = pageIndex
+            )
+            operationCount++
+        } else {
+            // Asynchronous execution for production
+            viewModelScope.launch(Dispatchers.Default) {
+                try {
+                    val newBookState = manageStickersUseCase.removeStickerFromPage(
+                        bookState = bookState,
+                        stickerId = stickerId,
+                        pageIndex = pageIndex
+                    )
+                    
+                    withContext(Dispatchers.Main) {
+                        bookState = newBookState
+                    }
+                    
+                    operationCount++
+                } catch (e: Exception) {
+                    handleError("removeSticker", e)
                 }
-                
-                operationCount++
-            } catch (e: Exception) {
-                handleError("removeSticker", e)
             }
         }
     }
@@ -128,23 +183,35 @@ class BookViewModel : ViewModel() {
      * Efficient page clearing with memory cleanup
      */
     fun clearPage(pageIndex: Int) {
-        viewModelScope.launch(Dispatchers.Default) {
-            try {
-                val newBookState = manageStickersUseCase.clearPageStickers(
-                    bookState = bookState,
-                    pageIndex = pageIndex
-                )
-                
-                withContext(Dispatchers.Main) {
-                    bookState = newBookState
-                    // Suggest garbage collection after clearing many stickers
-                    if (operationCount > 100) {
-                        System.gc()
-                        operationCount = 0
+        if (testMode) {
+            // Synchronous execution for tests
+            bookState = manageStickersUseCase.clearPageStickers(
+                bookState = bookState,
+                pageIndex = pageIndex
+            )
+            if (operationCount > 100) {
+                System.gc()
+                operationCount = 0
+            }
+        } else {
+            // Asynchronous execution for production
+            viewModelScope.launch(Dispatchers.Default) {
+                try {
+                    val newBookState = manageStickersUseCase.clearPageStickers(
+                        bookState = bookState,
+                        pageIndex = pageIndex
+                    )
+                    
+                    withContext(Dispatchers.Main) {
+                        bookState = newBookState
+                        if (operationCount > 100) {
+                            System.gc()
+                            operationCount = 0
+                        }
                     }
+                } catch (e: Exception) {
+                    handleError("clearPage", e)
                 }
-            } catch (e: Exception) {
-                handleError("clearPage", e)
             }
         }
     }
@@ -163,15 +230,21 @@ class BookViewModel : ViewModel() {
      */
     fun addNewPage() {
         if (canAddMorePages) {
-            viewModelScope.launch(Dispatchers.Default) {
-                try {
-                    val newBookState = navigatePagesUseCase.addNewPage(bookState)
-                    
-                    withContext(Dispatchers.Main) {
-                        bookState = newBookState
+            if (testMode) {
+                // Synchronous execution for tests
+                bookState = navigatePagesUseCase.addNewPage(bookState)
+            } else {
+                // Asynchronous execution for production
+                viewModelScope.launch(Dispatchers.Default) {
+                    try {
+                        val newBookState = navigatePagesUseCase.addNewPage(bookState)
+                        
+                        withContext(Dispatchers.Main) {
+                            bookState = newBookState
+                        }
+                    } catch (e: Exception) {
+                        handleError("addNewPage", e)
                     }
-                } catch (e: Exception) {
-                    handleError("addNewPage", e)
                 }
             }
         }
