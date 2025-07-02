@@ -4,13 +4,49 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
 /**
- * Represents a page in the sticker book
+ * Represents a page in the sticker book with immutable state
  */
 data class PageData(
     val id: Int,
     val backgroundGradient: Brush,
-    val emojiStickers: MutableList<EmojiSticker> = mutableListOf()
-)
+    val emojiStickers: List<EmojiSticker> = emptyList()
+) {
+    /**
+     * Creates a copy with an added sticker
+     */
+    fun withAddedSticker(sticker: EmojiSticker): PageData = copy(
+        emojiStickers = emojiStickers + sticker
+    )
+    
+    /**
+     * Creates a copy with an updated sticker
+     */
+    fun withUpdatedSticker(updatedSticker: EmojiSticker): PageData = copy(
+        emojiStickers = emojiStickers.map { 
+            if (it.id == updatedSticker.id) updatedSticker else it 
+        }
+    )
+    
+    /**
+     * Creates a copy with a removed sticker
+     */
+    fun withRemovedSticker(stickerId: Long): PageData = copy(
+        emojiStickers = emojiStickers.filter { it.id != stickerId }
+    )
+    
+    /**
+     * Creates a copy with all stickers removed
+     */
+    fun withClearedStickers(): PageData = copy(
+        emojiStickers = emptyList()
+    )
+    
+    /**
+     * Finds a sticker by ID
+     */
+    fun findStickerById(id: Long): EmojiSticker? = 
+        emojiStickers.find { it.id == id }
+}
 
 /**
  * Collection of background gradients for pages

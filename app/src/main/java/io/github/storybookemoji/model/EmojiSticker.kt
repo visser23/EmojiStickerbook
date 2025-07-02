@@ -13,7 +13,13 @@ data class EmojiSticker(
     var scale: Float = 1.0f,                   // Size scale factor
     var rotation: Float = 0f,                  // Rotation in degrees
     val size: Float = 80.dp.value              // Base size of the emoji - increased from 48dp to 80dp
-)
+) {
+    companion object {
+        const val MIN_SCALE = 0.5f
+        const val MAX_SCALE = 3.0f
+        const val DEFAULT_SIZE_DP = 80
+    }
+}
 
 /**
  * Common emoji characters organized by categories

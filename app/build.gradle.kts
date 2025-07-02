@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.storybookemoji"
+    namespace = "io.github.storybookemoji"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.storybookemoji"
+        applicationId = "io.github.storybookemoji"
         minSdk = 21
         targetSdk = 35
         versionCode = 1
