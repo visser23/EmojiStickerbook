@@ -76,14 +76,15 @@ class BookViewModelTest {
 
     @Test
     fun `removeSticker removes correct sticker`() {
-        // Given - Add two stickers
+        // Given - Add two stickers with a small delay to ensure unique IDs
         viewModel.addSticker("😀", Offset(100f, 100f), 0)
+        Thread.sleep(1) // Ensure unique timestamp
         viewModel.addSticker("🎉", Offset(200f, 200f), 0)
         assertEquals(2, viewModel.currentPage!!.emojiStickers.size)
         
-        // Get the first sticker to remove
-        val stickerToRemove = viewModel.currentPage!!.emojiStickers[0]
-        val stickerToKeep = viewModel.currentPage!!.emojiStickers[1]
+        // Get the first sticker to remove (by emoji to avoid ID timing issues)
+        val stickerToRemove = viewModel.currentPage!!.emojiStickers.find { it.emoji == "😀" }!!
+        val stickerToKeep = viewModel.currentPage!!.emojiStickers.find { it.emoji == "🎉" }!!
 
         // When
         viewModel.removeSticker(stickerToRemove.id, 0)
@@ -92,6 +93,7 @@ class BookViewModelTest {
         assertEquals(1, viewModel.currentPage!!.emojiStickers.size)
         // The remaining sticker should be the one we didn't remove
         assertEquals(stickerToKeep.id, viewModel.currentPage!!.emojiStickers[0].id)
+        assertEquals("🎉", viewModel.currentPage!!.emojiStickers[0].emoji)
     }
 
     @Test
@@ -249,5 +251,68 @@ class BookViewModelTest {
         // Check that we're on the correct page by comparing IDs
         assertEquals("Expected page ID: $expectedPageId, Actual page ID: $actualPageId", 
                     expectedPageId, actualPageId)
+    }
+
+    @Test
+    fun `undo functionality works correctly`() {
+        // Given - Initial state with no undo available
+        assertFalse(viewModel.canUndo)
+        
+        // When - Add a sticker
+        viewModel.addSticker("😀", Offset(100f, 100f), 0)
+        
+        // Then - Should have undo available
+        assertTrue(viewModel.canUndo)
+        assertEquals(1, viewModel.currentPage!!.emojiStickers.size)
+        
+        // When - Undo the action
+        viewModel.undoLastAction()
+        
+        // Then - Sticker should be removed and no more undo available
+        assertTrue(viewModel.currentPage!!.emojiStickers.isEmpty())
+        assertFalse(viewModel.canUndo)
+    }
+
+    @Test
+    fun `undo works for sticker removal`() {
+        // Given - Add a sticker
+        viewModel.addSticker("😀", Offset(100f, 100f), 0)
+        assertEquals(1, viewModel.currentPage!!.emojiStickers.size)
+        val originalSticker = viewModel.currentPage!!.emojiStickers[0]
+        
+        // When - Remove the sticker
+        viewModel.removeSticker(originalSticker.id, 0)
+        assertTrue(viewModel.currentPage!!.emojiStickers.isEmpty())
+        assertTrue(viewModel.canUndo)
+        
+        // When - Undo the removal
+        viewModel.undoLastAction()
+        
+        // Then - Sticker should be restored
+        assertEquals(1, viewModel.currentPage!!.emojiStickers.size)
+        assertEquals(originalSticker.emoji, viewModel.currentPage!!.emojiStickers[0].emoji)
+    }
+
+    @Test
+    fun `undo is page-specific`() {
+        // Given - Add sticker to page 0
+        viewModel.addSticker("😀", Offset(100f, 100f), 0)
+        assertTrue(viewModel.canUndo)
+        
+        // When - Navigate to page 1
+        viewModel.navigateToPage(1)
+        
+        // Then - No undo available on page 1
+        assertFalse(viewModel.canUndo)
+        
+        // When - Add sticker to page 1
+        viewModel.addSticker("🎉", Offset(200f, 200f), 1)
+        assertTrue(viewModel.canUndo)
+        
+        // When - Navigate back to page 0
+        viewModel.navigateToPage(0)
+        
+        // Then - Undo available on page 0
+        assertTrue(viewModel.canUndo)
     }
 } 

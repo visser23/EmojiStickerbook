@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.storybookemoji.domain.usecases.ManageStickersUseCase
 import io.github.storybookemoji.domain.usecases.NavigatePagesUseCase
+import io.github.storybookemoji.domain.usecases.UndoRedoUseCase
 import io.github.storybookemoji.model.BookState
 import io.github.storybookemoji.model.EmojiSticker
 import kotlinx.coroutines.launch
@@ -27,6 +28,7 @@ class BookViewModel(
     // Use cases for business logic
     private val manageStickersUseCase = ManageStickersUseCase()
     private val navigatePagesUseCase = NavigatePagesUseCase()
+    private val undoRedoUseCase = UndoRedoUseCase()
     
     // Main app state with performance monitoring
     var bookState by mutableStateOf(BookState.createInitialState())
@@ -41,6 +43,7 @@ class BookViewModel(
     val totalPages: Int get() = bookState.pages.size
     val currentPage get() = bookState.currentPage
     val canAddMorePages: Boolean get() = bookState.pages.size < BookState.MAX_PAGE_COUNT
+    val canUndo: Boolean get() = undoRedoUseCase.canUndo(currentPageIndex)
     
     // Emoji selector state
     var isEmojiSelectorVisible by mutableStateOf(false)
@@ -59,6 +62,11 @@ class BookViewModel(
             viewModelScope.launch(Dispatchers.Default) {
                 try {
                     checkMemoryUsage()
+                    
+                    // Record current page state for undo
+                    bookState.pages.getOrNull(pageIndex)?.let { currentPage ->
+                        undoRedoUseCase.recordPageState(pageIndex, currentPage)
+                    }
                     
                     val validatedPosition = validateStickerPosition(
                         position = position,
@@ -91,6 +99,11 @@ class BookViewModel(
      */
     private fun addStickerSync(emoji: String, position: Offset, pageIndex: Int) {
         try {
+            // Record current page state for undo
+            bookState.pages.getOrNull(pageIndex)?.let { currentPage ->
+                undoRedoUseCase.recordPageState(pageIndex, currentPage)
+            }
+            
             val validatedPosition = validateStickerPosition(
                 position = position,
                 pageWidth = 1080f,
@@ -151,6 +164,11 @@ class BookViewModel(
     fun removeSticker(stickerId: Long, pageIndex: Int) {
         if (testMode) {
             // Synchronous execution for tests
+            // Record current page state for undo
+            bookState.pages.getOrNull(pageIndex)?.let { currentPage ->
+                undoRedoUseCase.recordPageState(pageIndex, currentPage)
+            }
+            
             bookState = manageStickersUseCase.removeStickerFromPage(
                 bookState = bookState,
                 stickerId = stickerId,
@@ -161,6 +179,11 @@ class BookViewModel(
             // Asynchronous execution for production
             viewModelScope.launch(Dispatchers.Default) {
                 try {
+                    // Record current page state for undo
+                    bookState.pages.getOrNull(pageIndex)?.let { currentPage ->
+                        undoRedoUseCase.recordPageState(pageIndex, currentPage)
+                    }
+                    
                     val newBookState = manageStickersUseCase.removeStickerFromPage(
                         bookState = bookState,
                         stickerId = stickerId,
@@ -185,6 +208,11 @@ class BookViewModel(
     fun clearPage(pageIndex: Int) {
         if (testMode) {
             // Synchronous execution for tests
+            // Record current page state for undo
+            bookState.pages.getOrNull(pageIndex)?.let { currentPage ->
+                undoRedoUseCase.recordPageState(pageIndex, currentPage)
+            }
+            
             bookState = manageStickersUseCase.clearPageStickers(
                 bookState = bookState,
                 pageIndex = pageIndex
@@ -197,6 +225,11 @@ class BookViewModel(
             // Asynchronous execution for production
             viewModelScope.launch(Dispatchers.Default) {
                 try {
+                    // Record current page state for undo
+                    bookState.pages.getOrNull(pageIndex)?.let { currentPage ->
+                        undoRedoUseCase.recordPageState(pageIndex, currentPage)
+                    }
+                    
                     val newBookState = manageStickersUseCase.clearPageStickers(
                         bookState = bookState,
                         pageIndex = pageIndex
@@ -250,6 +283,45 @@ class BookViewModel(
         }
     }
     
+    /**
+     * Undoes the last action on the current page
+     */
+    fun undoLastAction() {
+        if (testMode) {
+            // Synchronous execution for tests
+            undoRedoUseCase.undoLastAction(bookState, currentPageIndex)?.let { newBookState ->
+                bookState = newBookState
+                operationCount++
+            }
+        } else {
+            // Asynchronous execution for production
+            viewModelScope.launch(Dispatchers.Default) {
+                try {
+                    val newBookState = undoRedoUseCase.undoLastAction(bookState, currentPageIndex)
+                    
+                    if (newBookState != null) {
+                        withContext(Dispatchers.Main) {
+                            bookState = newBookState
+                        }
+                        operationCount++
+                    }
+                } catch (e: Exception) {
+                    handleError("undoLastAction", e)
+                }
+            }
+        }
+    }
+    
+    /**
+     * Gets undo information for debugging
+     */
+    fun getUndoInfo(): String {
+        val memoryInfo = undoRedoUseCase.getMemoryInfo()
+        return "Undo: ${undoRedoUseCase.getUndoCount(currentPageIndex)} actions available, " +
+               "${memoryInfo.totalHistoryEntries} total entries, " +
+               "${memoryInfo.pagesWithHistory} pages with history"
+    }
+
     /**
      * Toggle emoji selector visibility
      */

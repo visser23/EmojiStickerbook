@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.ExperimentalUnitApi
 import androidx.compose.ui.unit.dp
 import io.github.storybookemoji.presentation.viewmodels.BookViewModel
 import io.github.storybookemoji.ui.components.BookPage
+import io.github.storybookemoji.ui.components.UndoButton
 import kotlinx.coroutines.launch
 
 /**
@@ -94,6 +95,15 @@ fun BookScreen() {
                     onRemoveSticker = { sticker ->
                         viewModel.removeSticker(sticker.id, pageIndex)
                     }
+                )
+                
+                // Undo button at bottom left
+                UndoButton(
+                    canUndo = viewModel.canUndo,
+                    onUndo = { viewModel.undoLastAction() },
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(16.dp)
                 )
                 
                 // Page number indicator at bottom right

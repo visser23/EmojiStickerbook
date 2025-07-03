@@ -70,6 +70,7 @@ fun BookPage(
             }
     ) {
         // Render stickers with optimized keys for better performance
+        // Render in order so topmost stickers (last in list) are rendered last and handle touches first
         stickers.forEach { sticker ->
             key(sticker.id) {
                 DraggableEmoji(
@@ -80,9 +81,16 @@ fun BookPage(
                         onUpdateSticker(updatedSticker)
                     },
                     onRemove = {
-                        onRemoveSticker(sticker)
+                        // Find topmost sticker at this position for removal
+                        val topmostSticker = pageData.findStickerAt(sticker.position, tolerance = 40f)
+                        if (topmostSticker != null) {
+                            onRemoveSticker(topmostSticker)
+                        } else {
+                            onRemoveSticker(sticker)
+                        }
                     },
-                    containerSize = uiState.containerSize
+                    containerSize = uiState.containerSize,
+                    isTopmost = sticker == stickers.lastOrNull { it.containsPoint(sticker.position, 40f) }
                 )
             }
         }
