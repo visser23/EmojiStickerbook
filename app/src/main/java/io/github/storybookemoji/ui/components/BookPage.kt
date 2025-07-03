@@ -1,11 +1,13 @@
 package io.github.storybookemoji.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -15,7 +17,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import io.github.storybookemoji.model.EmojiSticker
 import io.github.storybookemoji.model.PageData
-import androidx.compose.foundation.gestures.detectTapGestures
 
 /**
  * A performance-optimized single page in the sticker book
@@ -34,7 +35,9 @@ fun BookPage(
             PageUiState(
                 showEmojiSelector = false,
                 touchPosition = Offset.Zero,
-                containerSize = Offset.Zero
+                containerSize = Offset.Zero,
+                showDeletionBin = false,
+                isDraggingSticker = false
             )
         )
     }
@@ -75,24 +78,63 @@ fun BookPage(
             key(sticker.id) {
                 DraggableEmoji(
                     emojiSticker = sticker,
+                    containerSize = uiState.containerSize,
+                    isTopmost = sticker == stickers.lastOrNull { it.containsPoint(sticker.position, 40f) },
                     onPositionChange = { newPosition ->
                         // Create updated sticker immutably
                         val updatedSticker = sticker.copy(position = newPosition)
                         onUpdateSticker(updatedSticker)
                     },
+                    onDragStart = {
+                        uiState = uiState.copy(
+                            showDeletionBin = true,
+                            isDraggingSticker = true
+                        )
+                    },
+                    onDragEnd = { position ->
+                        uiState = uiState.copy(
+                            showDeletionBin = false,
+                            isDraggingSticker = false
+                        )
+                        
+                        // Check if dropped on deletion bin
+                        val binPosition = Offset(
+                            x = uiState.containerSize.x - 60.dp.value,
+                            y = 60.dp.value
+                        )
+                        
+                        if (isHoveringOverDeletionBin(position, binPosition)) {
+                            // Find topmost sticker at this position for removal
+                            val topmostSticker = pageData.findStickerAt(sticker.position, tolerance = 40f)
+                            if (topmostSticker != null) {
+                                onRemoveSticker(topmostSticker)
+                            } else {
+                                onRemoveSticker(sticker)
+                            }
+                        }
+                    },
                     onRemove = {
-                        // Find topmost sticker at this position for removal
+                        // Long press deletion as backup method
                         val topmostSticker = pageData.findStickerAt(sticker.position, tolerance = 40f)
                         if (topmostSticker != null) {
                             onRemoveSticker(topmostSticker)
                         } else {
                             onRemoveSticker(sticker)
                         }
-                    },
-                    containerSize = uiState.containerSize,
-                    isTopmost = sticker == stickers.lastOrNull { it.containsPoint(sticker.position, 40f) }
+                    }
                 )
             }
+        }
+        
+        // Deletion bin - positioned in top-right corner
+        if (uiState.showDeletionBin) {
+            DeletionBin(
+                visible = uiState.showDeletionBin,
+                isHoveringOverBin = false, // TODO: implement hover detection
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp)
+            )
         }
         
         // Show emoji selector when needed
@@ -116,5 +158,7 @@ fun BookPage(
 private data class PageUiState(
     val showEmojiSelector: Boolean,
     val touchPosition: Offset,
-    val containerSize: Offset
+    val containerSize: Offset,
+    val showDeletionBin: Boolean,
+    val isDraggingSticker: Boolean
 ) 

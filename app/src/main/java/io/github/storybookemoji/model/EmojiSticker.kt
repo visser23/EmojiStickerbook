@@ -13,12 +13,14 @@ data class EmojiSticker(
     var position: Offset,                      // Position on the page
     var scale: Float = 1.0f,                   // Size scale factor
     var rotation: Float = 0f,                  // Rotation in degrees
-    val size: Float = 80.dp.value              // Base size of the emoji - increased from 48dp to 80dp
+    val size: Float = 120.dp.value             // Base size of the emoji - optimized for touch targets
 ) {
     companion object {
-        const val MIN_SCALE = 0.5f
-        const val MAX_SCALE = 3.0f
-        const val DEFAULT_SIZE_DP = 80
+        const val MIN_SCALE = 0.4f                 // Ensures 48dp minimum touch target (120 × 0.4 = 48dp)
+        const val MAX_SCALE = 2.5f                 // Prevents overflow while allowing good scaling
+        const val DEFAULT_SIZE_DP = 120            // Research-based optimal size for finger manipulation
+        const val MIN_TOUCH_TARGET_DP = 48         // Android guideline minimum
+        const val OPTIMAL_TOUCH_TARGET_DP = 120    // Research-based optimal for precise manipulation
         
         /**
          * Validates if a scale value is within acceptable range
@@ -37,6 +39,17 @@ data class EmojiSticker(
                 scale > MAX_SCALE -> MAX_SCALE
                 else -> scale
             }
+        }
+        
+        /**
+         * Validates if a position is within page boundaries considering sticker size
+         */
+        fun validatePosition(position: Offset, pageSize: Offset, stickerSize: Float): Offset {
+            val halfSize = (stickerSize / 2f)
+            return Offset(
+                x = position.x.coerceIn(halfSize, pageSize.x - halfSize),
+                y = position.y.coerceIn(halfSize, pageSize.y - halfSize)
+            )
         }
     }
     
@@ -65,6 +78,16 @@ data class EmojiSticker(
         return abs(point.x - position.x) <= halfSize && 
                abs(point.y - position.y) <= halfSize
     }
+    
+    /**
+     * Gets the current touch target size in dp
+     */
+    val currentTouchTargetSize: Float get() = size * scale
+    
+    /**
+     * Checks if sticker meets minimum touch target guidelines
+     */
+    val meetsMinimumTouchTarget: Boolean get() = currentTouchTargetSize >= MIN_TOUCH_TARGET_DP
 }
 
 /**
@@ -89,7 +112,7 @@ object CommonEmojis {
     
     // Food & Drink
     val food = listOf(
-        "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🍈", "🍒", "🍑", "🥭", 
+        "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🍈", "🍒", "🍑", "��", 
         "🍍", "🥥", "🥝", "🍅", "🥑", "🍆", "🥔", "🥕", "🌽", "🥦", "🥬", "🥒", 
         "🌶", "🌰", "🥜", "🍞", "🥐", "🥖", "🥨", "🥯", "🧀", "🥚", "🍳", "🥞", 
         "🧇", "🥓", "🥩", "🍗", "🍖", "🦴", "🍔", "🍟", "🍕", "🌭", "🥪", "🌮"

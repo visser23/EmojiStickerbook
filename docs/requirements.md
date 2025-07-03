@@ -1,5 +1,53 @@
 # 📋 Requirements - Emoji Sticker Book
 
+## 🚨 CRITICAL PERFORMANCE & USABILITY ISSUES (DISCOVERED IN TESTING)
+
+### ISSUE 1: Initial Emoji Sticker Size Too Small
+**Problem**: Current 80dp initial size makes drag, resize, and rotate controls difficult to test and use effectively, even for smaller fingers
+**Impact**: Core functionality unusable on physical devices
+**Research Findings**: 
+- Current: 80dp base × 1.6f display multiplier = ~128dp touch targets
+- Android Guidelines: Minimum 44-48dp (7-10mm physical size)
+- User Testing: 80dp base size still feels too small for precise manipulation
+
+**Acceptance Criteria:**
+- [ ] Initial sticker size increased to provide 48dp+ minimum touch targets
+- [ ] Research-based sizing considering average phone screen sizes and finger sizes
+- [ ] Minimum size prevents stickers from becoming too small to manipulate (44dp minimum)
+- [ ] Maximum size prevents stickers from exceeding page boundaries
+- [ ] Touch target optimization for precise gesture recognition
+
+### ISSUE 2: Janky Gesture Handling
+**Problem**: Resizing and rotation feel inconsistent and unresponsive in both emulator and physical device testing
+**Impact**: Poor user experience, frustrated interactions
+**Technical Findings**:
+- Multiple overlapping `pointerInput` modifiers may conflict
+- Complex coordinate transformations causing gesture delays
+- Edge detection logic interfering with gesture recognition
+- Performance optimizations potentially causing gesture conflicts
+
+**Acceptance Criteria:**
+- [ ] Smooth, responsive gesture handling at 60fps minimum
+- [ ] Simplified gesture coordination architecture
+- [ ] Eliminated gesture conflicts between drag, scale, and rotation
+- [ ] Improved multi-touch handling for simultaneous gestures
+- [ ] Consistent gesture responsiveness across different device types
+
+### ISSUE 3: Non-Functional Long Press Deletion
+**Problem**: Long press to delete feature isn't working, and questionable if this is the most intuitive deletion method
+**Impact**: Users cannot remove stickers, core functionality broken
+**UX Research Findings**:
+- Long press deletion is hidden and less discoverable
+- Swipe-to-delete or drag-to-bin patterns more intuitive
+- Visual deletion methods provide better user feedback
+
+**Acceptance Criteria:**
+- [ ] Fix current long press deletion implementation
+- [ ] Research and implement more intuitive deletion UX pattern
+- [ ] Visual feedback for deletion actions
+- [ ] Clear, discoverable deletion method for target age group
+- [ ] Undo functionality for accidental deletions
+
 ## User Stories & Acceptance Criteria
 
 ### Epic 1: Core Sticker Book Experience

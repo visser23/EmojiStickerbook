@@ -1,5 +1,21 @@
 # 📅 Project Plan - Emoji Sticker Book
 
+## 🚨 CRITICAL STATUS UPDATE
+
+### **BLOCKING ISSUES DISCOVERED**
+During physical device testing, **three critical usability issues** have been identified that prevent the app from being functional for its target users. These issues must be resolved before proceeding to Phase 2.
+
+**Issues Identified:**
+1. **Initial emoji sticker size too small** - 80dp base size insufficient for touch manipulation
+2. **Janky gesture handling** - Resizing and rotation unresponsive and inconsistent  
+3. **Non-functional long press deletion** - Core deletion functionality broken
+
+**Impact:** Core functionality unusable on physical devices - **Phase 2 BLOCKED**
+
+**Required Action:** Immediate **Phase 1.5: Critical UX Fixes** before Phase 2 can proceed
+
+---
+
 ## Current Project Status
 
 ### ✅ Completed Features (What Exists Today)
@@ -8,8 +24,8 @@
 - [x] 8 unique gradient background pages  
 - [x] Emoji sticker placement via tap
 - [x] Drag and drop sticker movement
-- [x] Long-press sticker removal
-- [x] Pinch-to-scale sticker resizing
+- [x] Long-press sticker removal (⚠️ **BROKEN - CRITICAL ISSUE**)
+- [x] Pinch-to-scale sticker resizing (⚠️ **JANKY - CRITICAL ISSUE**)
 - [x] Categorized emoji collection (100+ emojis)
 - [x] Page clearing functionality
 - [x] Dynamic page generation (up to 30 pages)
@@ -29,9 +45,14 @@
 - [x] **🏗️ NEW: Production Build System** - ProGuard optimization, 15% APK reduction
 
 ### 🚧 In-Progress/Partially Complete
-- [ ] **Accessibility**: Basic Compose accessibility but needs TalkBack testing
-- [ ] **Error Handling**: Domain validation added - comprehensive strategy next
-- [ ] **Documentation**: README exists but lacks comprehensive technical docs
+- [ ] **❌ Accessibility**: Basic Compose accessibility but needs TalkBack testing
+- [ ] **❌ Error Handling**: Domain validation added - comprehensive strategy next
+- [ ] **❌ Documentation**: README exists but lacks comprehensive technical docs
+
+### ❌ Critical Issues Blocking Progress
+- [ ] **🚨 STICKER SIZING**: Initial 80dp size too small for usability
+- [ ] **🚨 GESTURE HANDLING**: Janky, unresponsive resize/rotation gestures
+- [ ] **🚨 DELETION UX**: Long press deletion non-functional and poor UX pattern
 
 ### ❌ Missing Critical Features
 - [ ] **Drawing Tools**: No finger drawing capabilities
@@ -107,8 +128,168 @@
   - [ ] User experience testing with children
   - [ ] Owner: _Executor (UX/UI Specialist)_
 
-### 🚀 Phase 2: Core Feature Enhancement (6-8 weeks)
+### ✅ **Phase 1.5: Critical UX Fixes (2-3 weeks) - REOPENED DUE TO ARCHITECTURAL ISSUES**
+**Goal**: Resolve blocking usability issues discovered during device testing
+**Status**: **🚨 CRITICAL ISSUES IDENTIFIED - FUNDAMENTAL ARCHITECTURE PROBLEMS**
+
+#### **🔍 COMPREHENSIVE CODE REVIEW FINDINGS**
+**Date**: December 2024  
+**Status**: **❌ CRITICAL ARCHITECTURAL FLAWS DISCOVERED**
+
+**Root Cause Analysis Summary:**
+After thorough code review against user requirements, **fundamental architectural issues** have been identified that prevent all gesture functionality from working correctly.
+
+#### **❌ PRIMARY ISSUES IDENTIFIED**
+
+**1. State Synchronization Conflict**
+- **Problem**: `transformState` in `DraggableEmoji` diverged from `EmojiSticker` model state
+- **Impact**: UI changes don't propagate to persistent state
+- **Evidence**: Direct mutable modification of data class properties violates architecture
+
+**2. Gesture Modifier Stacking Conflicts** 
+- **Problem**: Multiple `pointerInput` modifiers interfere with each other
+- **Impact**: Last modifier consumes all events, blocking earlier gesture detection
+- **Evidence**: Sequential stacking prevents proper event distribution
+
+**3. Topmost Detection Logic Flaw**
+- **Problem**: Incorrect overlap detection logic
+- **Impact**: Wrong stickers receive gesture events in overlapping scenarios
+- **Evidence**: Logic checks sticker against its own position rather than other stickers
+
+**4. Missing Gesture Testing**
+- **Problem**: Zero test coverage for gesture functionality  
+- **Impact**: Issues go undetected, no validation of requirements
+- **Evidence**: No tests found for `detectTransformGestures`, `detectDragGestures`, etc.
+
+**5. Architectural Violations**
+- **Problem**: Direct mutation of immutable data classes
+- **Impact**: State management violations, unpredictable behavior
+- **Evidence**: `emojiSticker.apply { scale = ... }` pattern throughout codebase
+
+#### **📋 CORRECTED ACTION PLAN**
+
+**Phase 1.5.1: State Architecture Reconstruction (Week 1)**
+- [ ] **❌ CRITICAL: State Flow Architecture Fix**
+  - [ ] Remove all direct mutable modifications of data classes
+  - [ ] Implement proper callback chain from DraggableEmoji → BookPage → ViewModel
+  - [ ] Add gesture state callbacks: `onScaleChange`, `onRotationChange`, `onPositionChange`
+  - [ ] Ensure immutable state updates throughout the chain
+  - [ ] Owner: _Executor (Full-Stack Developer)_
+
+**Phase 1.5.2: Unified Gesture Implementation (Week 2)**  
+- [ ] **❌ CRITICAL: Gesture Handler Reconstruction**
+  - [ ] Replace multiple conflicting `pointerInput` modifiers with unified handler
+  - [ ] Implement proper multi-touch event detection (single vs multi-finger)
+  - [ ] Add two-finger pinch-to-zoom gesture detection
+  - [ ] Add two-finger rotation gesture detection  
+  - [ ] Implement proper event consumption and priority handling
+  - [ ] Owner: _Executor (Full-Stack Developer)_
+
+**Phase 1.5.3: Testing & Validation Framework (Week 3)**
+- [ ] **❌ CRITICAL: Gesture Testing Implementation**
+  - [ ] Unit tests for gesture detection logic
+  - [ ] Integration tests for state update flow
+  - [ ] Performance validation for gesture responsiveness
+  - [ ] Manual testing checklist validation
+  - [ ] 90%+ test coverage for gesture functionality
+  - [ ] Owner: _Executor (Test Engineer)_
+
+#### **🎯 TECHNICAL METHODOLOGY**
+
+**State Architecture Pattern:**
+```kotlin
+// ✅ CORRECT: Immutable state updates
+DraggableEmoji(
+    emojiSticker = sticker,
+    onScaleChange = { newScale -> 
+        viewModel.updateStickerScale(sticker.id, newScale) 
+    },
+    onRotationChange = { newRotation -> 
+        viewModel.updateStickerRotation(sticker.id, newRotation) 
+    },
+    onPositionChange = { newPosition -> 
+        viewModel.updateStickerPosition(sticker.id, newPosition) 
+    }
+)
+```
+
+**Unified Gesture Pattern:**
+```kotlin
+// ✅ CORRECT: Single coordinated gesture handler
+.pointerInput(Unit) {
+    awaitEachGesture {
+        // Unified detection of drag, scale, rotation, tap gestures
+        // Proper multi-touch event routing
+        // Correct event consumption priority
+    }
+}
+```
+
+**Testing Pattern:**
+```kotlin
+// ✅ CORRECT: Comprehensive gesture testing
+@Test fun `pinch gesture updates scale correctly`()
+@Test fun `rotation gesture maintains position`() 
+@Test fun `drag gesture respects boundaries`()
+@Test fun `topmost sticker receives gestures in overlap scenarios`()
+```
+
+#### **✅ SUCCESS CRITERIA (CORRECTED)**
+
+**Functional Requirements Validation:**
+1. ✅ User can add an emoji on screen (WORKING)
+2. ❌ User can resize emoji with pinch gestures (NOT WORKING - FIX REQUIRED)
+3. ❌ User can drag emoji to deletion bin (NOT WORKING - FIX REQUIRED) 
+4. ❌ User can rotate emoji with two-finger gestures (NOT WORKING - FIX REQUIRED)
+5. ✅ Emojis persist on pages until deleted (WORKING)
+6. ✅ Undo button per page works (WORKING)
+
+**Technical Success Criteria:**
+- [ ] All gesture types work independently and in combination
+- [ ] State updates propagate correctly through architecture
+- [ ] Performance meets 60fps target on target devices
+- [ ] 90%+ test coverage for gesture functionality
+- [ ] Zero architectural violations in code review
+- [ ] Manual testing checklist 100% complete
+
+**Quality Gates:**
+- [ ] Build: Clean compilation with zero gesture-related errors
+- [ ] Tests: All new gesture tests passing + existing tests maintained
+- [ ] Architecture: Immutable state pattern enforced throughout
+- [ ] Performance: No regression in touch responsiveness
+- [ ] Requirements: All 6 functional requirements working correctly
+
+#### **🚨 RISK MITIGATION**
+
+**High Risk Items:**
+- **Gesture Conflicts**: Unified handler approach mitigates modifier stacking issues
+- **State Divergence**: Immutable updates prevent state synchronization problems  
+- **Performance Impact**: Careful event handling optimization maintains 60fps target
+- **Testing Complexity**: Incremental test development with clear success criteria
+
+**Mitigation Strategies:**
+- **Incremental Development**: Fix state architecture first, then gestures, then testing
+- **Continuous Validation**: Test each gesture type independently before combining
+- **Performance Monitoring**: Regular benchmarking during development
+- **Architecture Review**: Code review after each major change
+
+---
+
+### 🚀 Phase 2: Core Feature Enhancement (6-8 weeks) - **🔴 BLOCKED UNTIL PHASE 1.5 COMPLETE**
 **Goal**: Add major creative features while maintaining quality
+**Status**: **🔴 BLOCKED - CANNOT PROCEED UNTIL GESTURE FOUNDATION IS SOLID**
+
+**Blocking Dependencies:**
+- All gesture functionality must be working correctly
+- State management architecture must be stable
+- Test coverage must validate gesture reliability
+- Performance targets must be met with current functionality
+
+**Ready Criteria for Phase 2:**
+- ✅ All 6 functional requirements working correctly
+- ✅ 90%+ test coverage for gesture functionality
+- ✅ Clean architecture with immutable state management
+- ✅ 60fps performance maintained with full gesture functionality
 
 #### Week 7-10: Drawing System Implementation
 - [ ] **Basic finger drawing functionality**

@@ -84,13 +84,27 @@ data class EmojiSticker(
     var position: Offset,
     var scale: Float = 1.0f,
     var rotation: Float = 0f,
-    val size: Float = 80.dp.value
+    val size: Float = 120.dp.value
 ) {
     companion object {
-        const val MIN_SCALE = 0.5f
-        const val MAX_SCALE = 3.0f
-        const val DEFAULT_SIZE_DP = 80
+        const val MIN_SCALE = 0.4f
+        const val MAX_SCALE = 2.5f
+        const val DEFAULT_SIZE_DP = 120
+        const val MIN_TOUCH_TARGET_DP = 48
+        const val OPTIMAL_TOUCH_TARGET_DP = 120
     }
+
+    fun validateScale(scale: Float): Float = scale.coerceIn(MIN_SCALE, MAX_SCALE)
+    fun validatePosition(position: Offset, pageSize: Size, stickerSize: Float): Offset {
+        val halfSize = (stickerSize / 2f)
+        return Offset(
+            x = position.x.coerceIn(halfSize, pageSize.width - halfSize),
+            y = position.y.coerceIn(halfSize, pageSize.height - halfSize)
+        )
+    }
+
+    val currentTouchTargetSize: Float get() = size * scale
+    val meetsMinimumTouchTarget: Boolean get() = currentTouchTargetSize >= MIN_TOUCH_TARGET_DP
 }
 ```
 
@@ -124,6 +138,42 @@ data class BookState(
         const val MAX_PAGE_COUNT = 30
     }
 }
+```
+
+#### GestureState
+```kotlin
+data class GestureState(
+    val isDragging: Boolean = false,
+    val isScaling: Boolean = false,
+    val isRotating: Boolean = false,
+    val isLongPressing: Boolean = false,
+    val gestureStartPosition: Offset = Offset.Zero,
+    val gestureStartScale: Float = 1.0f,
+    val gestureStartRotation: Float = 0f
+) {
+    val isActive: Boolean get() = isDragging || isScaling || isRotating || isLongPressing
+    
+    companion object {
+        val Idle = GestureState()
+    }
+}
+```
+
+#### DeletionMethod
+```kotlin
+sealed class DeletionMethod {
+    object LongPress : DeletionMethod()
+    object DragToBin : DeletionMethod()
+    object SwipeToDelete : DeletionMethod()
+    object DoubleTap : DeletionMethod()
+}
+
+data class DeletionConfig(
+    val method: DeletionMethod = DeletionMethod.DragToBin,
+    val showVisualFeedback: Boolean = true,
+    val enableUndo: Boolean = true,
+    val undoTimeoutMs: Long = 3000L
+)
 ```
 
 ## Component Architecture
@@ -430,6 +480,370 @@ class AppLifecycleHandler : DefaultLifecycleObserver {
     override fun onDestroy(owner: LifecycleOwner)
 }
 ```
+
+## 🚨 **CRITICAL UPDATE: Architectural Review Findings**
+
+### **Code Review Summary (December 2024)**
+
+**Status**: **❌ FUNDAMENTAL ARCHITECTURAL FLAWS DISCOVERED**
+
+During comprehensive code review against user requirements, critical architectural issues have been identified that prevent core gesture functionality from working. The following issues require immediate architectural reconstruction:
+
+#### **🔴 Critical Issues Identified**
+
+1. **State Synchronization Failure** (CRITICAL)
+   - `transformState` in `DraggableEmoji` diverged from `EmojiSticker` model state
+   - UI changes don't propagate to persistent data layer
+   - Direct mutation of data class properties violates immutable patterns
+
+2. **Gesture Modifier Conflicts** (CRITICAL)  
+   - Multiple `pointerInput` modifiers compete for touch events
+   - Last modifier consumes all events, blocking earlier gesture detection
+   - Sequential stacking prevents proper event distribution
+
+3. **Broken Topmost Detection** (HIGH)
+   - Incorrect overlap detection logic in sticker selection
+   - Wrong stickers receive gesture events in overlapping scenarios
+
+4. **Missing Test Coverage** (HIGH)
+   - Zero test coverage for gesture functionality
+   - No validation of core user requirements
+
+5. **Architecture Violations** (MEDIUM)
+   - Direct mutation of immutable data classes throughout codebase
+   - Violates Compose state management best practices
+
+#### **📋 Requirements Status Assessment**
+
+| Requirement | Status | Issue |
+|-------------|--------|-------|
+| Add emoji | ✅ WORKING | None |
+| Resize emoji | ❌ BROKEN | State sync failure |
+| Drag to bin | ❌ BROKEN | Gesture conflicts |
+| Rotate emoji | ❌ BROKEN | Gesture conflicts |
+| Page persistence | ✅ WORKING | None |
+| Undo functionality | ✅ WORKING | None |
+
+**Critical Gap**: 4 out of 6 core requirements non-functional
+
+---
+
+## **🛠️ Technical Architecture Specifications**
+
+### **Gesture Handling Architecture (REVISED)**
+
+#### **Current Broken Pattern**
+```kotlin
+// ❌ BROKEN: Multiple competing gesture modifiers
+.pointerInput(containerSize, isTopmost) {
+    detectDragGestures(onDrag = { ... })
+}
+.pointerInput(containerSize, isTopmost) {
+    detectTapGestures(onLongPress = { ... })
+}
+.pointerInput(containerSize, isTopmost) {
+    detectTransformGestures { ... } // BLOCKS ALL OTHERS
+}
+```
+
+#### **Corrected Unified Pattern**
+```kotlin
+// ✅ CORRECT: Unified gesture coordination
+.pointerInput(Unit) {
+    awaitEachGesture {
+        val firstDown = awaitFirstDown()
+        
+        // Detect gesture type based on pointer count and movement
+        when {
+            // Single touch - handle drag or long press
+            pointerCount == 1 -> handleSingleTouch(firstDown)
+            
+            // Multi-touch - handle scale and rotation
+            pointerCount >= 2 -> handleMultiTouch()
+        }
+    }
+}
+
+private suspend fun PointerInputScope.handleSingleTouch(firstDown: PointerInputChange) {
+    // Unified handling of drag and long press with proper priorities
+    val longPressTimeout = coroutineScope.async {
+        delay(viewConfiguration.longPressTimeoutMillis)
+        onLongPress(firstDown.position)
+    }
+    
+    try {
+        // Monitor for drag movement
+        awaitDragOrCancellation(firstDown.id)?.let { drag ->
+            longPressTimeout.cancel()
+            handleDragGesture(drag)
+        }
+    } finally {
+        longPressTimeout.cancel()
+    }
+}
+
+private suspend fun PointerInputScope.handleMultiTouch() {
+    // Handle pinch-to-zoom and rotation gestures
+    var zoom = 1f
+    var rotation = 0f
+    var pan = Offset.Zero
+    
+    do {
+        val event = awaitPointerEvent()
+        val cancelled = event.changes.any { it.isConsumed }
+        
+        if (!cancelled) {
+            val zoomChange = event.calculateZoom()
+            val rotationChange = event.calculateRotation()
+            val panChange = event.calculatePan()
+            
+            zoom *= zoomChange
+            rotation += rotationChange
+            pan += panChange
+            
+            // Apply transform changes through callback
+            onTransform(pan, zoom, rotation)
+            
+            event.changes.forEach { it.consume() }
+        }
+    } while (!cancelled && event.changes.any { it.pressed })
+}
+```
+
+### **State Management Architecture (REVISED)**
+
+#### **Current Broken Pattern**
+```kotlin
+// ❌ BROKEN: Direct mutation of data class
+var transformState by remember { mutableStateOf(...) }
+LaunchedEffect(transformState) {
+    emojiSticker.apply {  // DIRECT MUTATION
+        scale = transformState.scale
+        rotation = transformState.rotation
+        position = transformState.position
+    }
+}
+```
+
+#### **Corrected Immutable Pattern**
+```kotlin
+// ✅ CORRECT: Callback-based immutable updates
+@Composable
+fun DraggableEmoji(
+    emojiSticker: EmojiSticker,
+    onScaleChange: (Float) -> Unit,
+    onRotationChange: (Float) -> Unit,
+    onPositionChange: (Offset) -> Unit,
+    onRemove: () -> Unit
+) {
+    // UI reflects model state directly - no local transform state
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(
+                emojiSticker.position.x.roundToInt(),
+                emojiSticker.position.y.roundToInt()
+            )}
+            .rotate(emojiSticker.rotation)
+            .scale(emojiSticker.scale)
+            .pointerInput(Unit) {
+                // Unified gesture handler calling callbacks
+                detectUnifiedGestures(
+                    onDrag = { delta -> 
+                        val newPosition = emojiSticker.position + delta
+                        onPositionChange(newPosition)
+                    },
+                    onScale = { scaleFactor ->
+                        val newScale = (emojiSticker.scale * scaleFactor)
+                            .coerceIn(EmojiSticker.MIN_SCALE, EmojiSticker.MAX_SCALE)
+                        onScaleChange(newScale)
+                    },
+                    onRotate = { rotationDelta ->
+                        val newRotation = emojiSticker.rotation + rotationDelta
+                        onRotationChange(newRotation)
+                    },
+                    onLongPress = { onRemove() }
+                )
+            }
+    ) {
+        Text(
+            text = emojiSticker.emoji,
+            fontSize = (emojiSticker.size * emojiSticker.scale * 0.9f).sp
+        )
+    }
+}
+
+// In BookPage:
+DraggableEmoji(
+    emojiSticker = sticker,
+    onScaleChange = { newScale ->
+        val updatedSticker = sticker.copy(scale = newScale)
+        onUpdateSticker(updatedSticker)
+    },
+    onRotationChange = { newRotation ->
+        val updatedSticker = sticker.copy(rotation = newRotation)
+        onUpdateSticker(updatedSticker)
+    },
+    onPositionChange = { newPosition ->
+        val updatedSticker = sticker.copy(position = newPosition)
+        onUpdateSticker(updatedSticker)
+    },
+    onRemove = { onRemoveSticker(sticker) }
+)
+```
+
+### **Topmost Detection Algorithm (CORRECTED)**
+
+#### **Current Broken Logic**
+```kotlin
+// ❌ BROKEN: Checks sticker against its own position
+isTopmost = sticker == stickers.lastOrNull { 
+    it.containsPoint(sticker.position, 40f) 
+}
+```
+
+#### **Corrected Overlap Detection**
+```kotlin
+// ✅ CORRECT: Find topmost sticker at touch point
+fun findTopmostStickerAt(
+    touchPoint: Offset, 
+    stickers: List<EmojiSticker>
+): EmojiSticker? {
+    return stickers
+        .filter { it.containsPoint(touchPoint, tolerance = 20f) }
+        .maxByOrNull { sticker ->
+            // Priority based on sticker order (last = topmost)
+            stickers.indexOf(sticker)
+        }
+}
+
+// In gesture handling:
+val topmostSticker = findTopmostStickerAt(touchPoint, pageData.emojiStickers)
+if (topmostSticker == currentSticker) {
+    // This sticker is topmost - handle gesture
+    processGesture(gestureEvent)
+} else {
+    // Another sticker is on top - ignore gesture
+    return
+}
+```
+
+### **Testing Architecture (REQUIRED)**
+
+#### **Gesture Unit Tests**
+```kotlin
+class GestureHandlingTest {
+    @Test
+    fun `single finger drag updates position correctly`() {
+        val initialPosition = Offset(100f, 100f)
+        val dragDelta = Offset(50f, 30f)
+        val expectedPosition = Offset(150f, 130f)
+        
+        // Test drag gesture updates position through callback
+        composeTestRule.setContent {
+            DraggableEmoji(
+                emojiSticker = EmojiSticker(position = initialPosition),
+                onPositionChange = { newPosition ->
+                    assertEquals(expectedPosition, newPosition)
+                }
+            )
+        }
+        
+        composeTestRule.onNode(hasText("😀"))
+            .performTouchInput {
+                dragBy(dragDelta)
+            }
+    }
+    
+    @Test
+    fun `pinch gesture updates scale correctly`() {
+        val initialScale = 1.0f
+        val scaleMultiplier = 1.5f
+        val expectedScale = 1.5f
+        
+        composeTestRule.setContent {
+            DraggableEmoji(
+                emojiSticker = EmojiSticker(scale = initialScale),
+                onScaleChange = { newScale ->
+                    assertEquals(expectedScale, newScale, 0.01f)
+                }
+            )
+        }
+        
+        composeTestRule.onNode(hasText("😀"))
+            .performTouchInput {
+                pinch(
+                    start0 = Offset(100f, 100f),
+                    start1 = Offset(200f, 200f),
+                    end0 = Offset(75f, 75f),
+                    end1 = Offset(225f, 225f)
+                )
+            }
+    }
+    
+    @Test
+    fun `rotation gesture updates rotation correctly`() {
+        val initialRotation = 0f
+        val rotationDelta = 45f
+        val expectedRotation = 45f
+        
+        composeTestRule.setContent {
+            DraggableEmoji(
+                emojiSticker = EmojiSticker(rotation = initialRotation),
+                onRotationChange = { newRotation ->
+                    assertEquals(expectedRotation, newRotation, 1f)
+                }
+            )
+        }
+        
+        composeTestRule.onNode(hasText("😀"))
+            .performTouchInput {
+                rotate(rotationDelta)
+            }
+    }
+}
+```
+
+#### **Integration Tests**
+```kotlin
+class StickerWorkflowIntegrationTest {
+    @Test
+    fun `complete sticker manipulation workflow`() {
+        // Test complete user workflow:
+        // 1. Add sticker
+        // 2. Resize sticker
+        // 3. Rotate sticker
+        // 4. Move sticker
+        // 5. Delete sticker
+        // 6. Verify state persistence
+    }
+    
+    @Test
+    fun `overlapping stickers handle gestures correctly`() {
+        // Test topmost detection with multiple overlapping stickers
+    }
+    
+    @Test
+    fun `undo functionality works with all gesture types`() {
+        // Test undo for each type of gesture modification
+    }
+}
+```
+
+### **Performance Requirements (MAINTAINED)**
+
+- **Frame Rate**: 60fps during all gesture interactions
+- **Memory Usage**: <100MB peak during heavy gesture use
+- **Touch Responsiveness**: <16ms gesture recognition latency
+- **State Update**: <5ms for immutable state propagation
+
+### **Implementation Priority**
+
+1. **Phase 1**: Fix state architecture (immutable updates)
+2. **Phase 2**: Implement unified gesture handling
+3. **Phase 3**: Add comprehensive testing framework
+4. **Phase 4**: Performance optimization and validation
+
+This architectural specification provides the technical foundation for implementing reliable, testable gesture functionality that meets all user requirements.
 
 ---
 

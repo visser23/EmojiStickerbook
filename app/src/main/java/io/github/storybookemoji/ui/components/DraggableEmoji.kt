@@ -2,6 +2,7 @@ package io.github.storybookemoji.ui.components
 
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -18,29 +19,30 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.storybookemoji.model.EmojiSticker
-import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.hypot
-import kotlin.math.min
-import kotlin.math.roundToInt
+import kotlin.math.*
 
 /**
- * A performance-optimized draggable emoji component
- * Minimizes recompositions and memory allocations
- * Enhanced with consistent boundary handling and max size constraints
+ * Performance-optimized draggable emoji component with full gesture support.
+ * 
+ * Key optimizations:
+ * - Deferred state reads to minimize recompositions
+ * - Efficient gesture handling with cached calculations
+ * - Optimized boundary validation
+ * - Multi-touch support for scaling and rotation
  */
 @Composable
 fun DraggableEmoji(
     emojiSticker: EmojiSticker,
-    onPositionChange: (Offset) -> Unit,
-    onRemove: () -> Unit,
     containerSize: Offset,
-    isTopmost: Boolean = true
+    isTopmost: Boolean = true,
+    onPositionChange: (Offset) -> Unit,
+    onDragStart: () -> Unit = {},
+    onDragEnd: (Offset) -> Unit = {},
+    onRemove: () -> Unit
 ) {
-    val density = LocalDensity.current
+    // Note: LocalDensity removed as it's not currently used in this optimized implementation
     
-    // Consolidate state into a single data class to reduce recompositions
+    // Performance optimization: Single state object to minimize recompositions
     var transformState by remember {
         mutableStateOf(
             TransformState(
@@ -51,182 +53,115 @@ fun DraggableEmoji(
         )
     }
     
-    // Enhanced size calculation with consistent boundary checking
-    val emojiSize = remember(transformState.scale) { 
+    // Gesture coordination state
+    var isGestureActive by remember { mutableStateOf(false) }
+    
+    // Deferred calculations - only computed when needed, not on every recomposition
+    val emojiSizePx = remember(transformState.scale) { 
         emojiSticker.size * transformState.scale
     }
     
-    val displaySize = remember(emojiSize, density) { 
-        with(density) { (emojiSize * 1.5f).toDp() }
+    // Enhanced display size for better grabability - more generous sizing
+    val displaySizeDp = remember(transformState.scale) { 
+        // Direct calculation: 120dp base * scale * 1.6 multiplier for good touch targets
+        val baseSize = (EmojiSticker.DEFAULT_SIZE_DP * transformState.scale * 1.6f).dp
+        // Ensure minimum touch target compliance
+        baseSize.coerceAtLeast(EmojiSticker.MIN_TOUCH_TARGET_DP.dp)
     }
     
-    // FIXED: Consistent boundary calculations using half-size throughout
-    val boundedPosition = remember(transformState.position, containerSize, emojiSize) {
-        // Ensure sticker doesn't exceed container boundaries - use half size for proper centering
-        val halfSize = emojiSize / 2f
-        val maxX = (containerSize.x - halfSize).coerceAtLeast(halfSize)
-        val maxY = (containerSize.y - halfSize).coerceAtLeast(halfSize)
-        
-        Offset(
-            x = transformState.position.x.coerceIn(halfSize, maxX),
-            y = transformState.position.y.coerceIn(halfSize, maxY)
+    // Pre-calculated boundary constraints - computed once per container size change
+    val boundaryConstraints = remember(containerSize, emojiSticker.size) {
+        BoundaryConstraints(
+            containerSize = containerSize,
+            baseSize = emojiSticker.size,
+            edgeThreshold = containerSize.x * 0.15f
         )
     }
     
-    // Enhanced scale validation with dynamic max size based on container
-    val validateScale = remember(containerSize, emojiSticker.size) {
+    // Optimized position validation - only when transform state changes
+    val validatedPosition = remember(transformState, boundaryConstraints) {
+        boundaryConstraints.validatePosition(transformState.position, emojiSizePx)
+    }
+    
+    // Scale validation function with dynamic max scale
+    val validateScale = remember(boundaryConstraints) {
         { newScale: Float ->
-            // Calculate max scale that keeps sticker within bounds
-            val maxSizeForContainer = min(containerSize.x, containerSize.y) * 0.8f
-            val dynamicMaxScale = (maxSizeForContainer / emojiSticker.size).coerceAtMost(EmojiSticker.MAX_SCALE)
+            val dynamicMaxScale = boundaryConstraints.getMaxScale()
             newScale.coerceIn(EmojiSticker.MIN_SCALE, dynamicMaxScale)
         }
     }
     
-    // Update sticker properties only when necessary
+    // Efficient state synchronization - batched updates
     LaunchedEffect(transformState) {
-        emojiSticker.scale = transformState.scale
-        emojiSticker.rotation = transformState.rotation
-        emojiSticker.position = boundedPosition // Use bounded position
-        onPositionChange(boundedPosition)
-    }
-    
-    // Cache edge detection calculations
-    val edgeThresholdPx = remember(containerSize) { containerSize.x * 0.15f }
-    val isNearEdge = remember(edgeThresholdPx) { 
-        { position: Offset ->
-            position.x < edgeThresholdPx || position.x > containerSize.x - edgeThresholdPx
+        emojiSticker.apply {
+            scale = transformState.scale
+            rotation = transformState.rotation
+            position = validatedPosition
         }
+        onPositionChange(validatedPosition)
     }
-    
-    // Multi-touch state for scaling/rotation
-    var touchPoints by remember { mutableStateOf(emptyList<Offset>()) }
     
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .offset {
+            // Use lambda-based offset for performance - skips recomposition
+            .offset { 
                 IntOffset(
-                    boundedPosition.x.roundToInt(),
-                    boundedPosition.y.roundToInt()
+                    validatedPosition.x.roundToInt(),
+                    validatedPosition.y.roundToInt()
                 )
             }
-            .size(displaySize)
+            .size(displaySizeDp)
             .rotate(transformState.rotation)
-            // FIXED: Long press gesture FIRST to prevent event consumption conflicts
-            .pointerInput(isTopmost) {
+                        // Unified gesture handling - prevents conflicts between multiple gesture detectors
+            .pointerInput(containerSize, isTopmost) {
+                detectDragGestures(
+                    onDragStart = { 
+                        isGestureActive = true
+                        onDragStart()
+                    },
+                    onDragEnd = { 
+                        isGestureActive = false
+                        onDragEnd(transformState.position)
+                    },
+                    onDrag = { _, dragAmount ->
+                        if (!isGestureActive) return@detectDragGestures
+                        
+                        val newPosition = transformState.position + dragAmount
+                        val validatedNewPosition = boundaryConstraints.validatePosition(newPosition, emojiSizePx)
+                        
+                        transformState = transformState.copy(position = validatedNewPosition)
+                    }
+                )
+            }
+            .pointerInput(containerSize, isTopmost) {
                 detectTapGestures(
-                    onLongPress = { position ->
-                        if (!isNearEdge(position) && isTopmost) {
+                    onLongPress = { localPosition ->
+                        if (isTopmost && !boundaryConstraints.isNearEdge(localPosition, validatedPosition, displaySizeDp.toPx())) {
                             onRemove()
                         }
                     }
                 )
             }
-            // FIXED: Consistent boundary handling in drag gestures using half-size
-            .pointerInput(containerSize, emojiSize) {
-                detectDragGestures { change, dragAmount ->
-                    val isHorizontalEdgeSwipe = abs(dragAmount.x) > abs(dragAmount.y) && 
-                                               isNearEdge(change.position)
-                    
-                    if (!isHorizontalEdgeSwipe) {
-                        change.consume()
+            .pointerInput(containerSize, isTopmost) {
+                // Only handle transform gestures for topmost stickers
+                if (isTopmost) {
+                    detectTransformGestures(
+                        panZoomLock = false // Allow panning during scaling
+                    ) { _, pan, zoom, rotation ->
+                        val currentScale = transformState.scale
+                        val newScale = validateScale(currentScale * zoom)
                         
-                        // FIXED: Use consistent half-size boundary calculations
-                        val halfSize = emojiSize / 2f
-                        val maxX = (containerSize.x - halfSize).coerceAtLeast(halfSize)
-                        val maxY = (containerSize.y - halfSize).coerceAtLeast(halfSize)
-                        
-                        transformState = transformState.copy(
-                            position = Offset(
-                                x = (transformState.position.x + dragAmount.x).coerceIn(halfSize, maxX),
-                                y = (transformState.position.y + dragAmount.y).coerceIn(halfSize, maxY)
+                        // Update transform state if scaling or rotation occurred
+                        if (newScale != currentScale || rotation != 0f) {
+                            val newPosition = transformState.position + pan
+                            val validatedNewPosition = boundaryConstraints.validatePosition(newPosition, emojiSticker.size * newScale)
+                            
+                            transformState = transformState.copy(
+                                scale = newScale,
+                                position = validatedNewPosition,
+                                rotation = transformState.rotation + rotation
                             )
-                        )
-                    }
-                }
-            }
-            // Multi-touch handling - only consume events when actually processing
-            .pointerInput(containerSize) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pointers = event.changes.filter { it.pressed }
-                        
-                        when (pointers.size) {
-                            2 -> {
-                                val firstPointer = pointers[0].position
-                                val secondPointer = pointers[1].position
-                                
-                                // Convert sticker-relative coordinates to container coordinates for edge detection
-                                val displaySizePx = with(density) { displaySize.toPx() }
-                                val halfDisplaySize = displaySizePx / 2f
-                                
-                                val firstPointerContainer = Offset(
-                                    x = boundedPosition.x + firstPointer.x - halfDisplaySize,
-                                    y = boundedPosition.y + firstPointer.y - halfDisplaySize
-                                )
-                                val secondPointerContainer = Offset(
-                                    x = boundedPosition.x + secondPointer.x - halfDisplaySize,
-                                    y = boundedPosition.y + secondPointer.y - halfDisplaySize
-                                )
-                                
-                                // Only process multi-touch if both fingers are away from edges
-                                if (!isNearEdge(firstPointerContainer) && !isNearEdge(secondPointerContainer)) {
-                                    val currentDistance = hypot(
-                                        secondPointer.x - firstPointer.x,
-                                        secondPointer.y - firstPointer.y
-                                    )
-                                    
-                                    if (touchPoints.size == 2) {
-                                        val previousDistance = hypot(
-                                            touchPoints[1].x - touchPoints[0].x,
-                                            touchPoints[1].y - touchPoints[0].y
-                                        )
-                                        
-                                        if (previousDistance > 0) {
-                                            val zoomFactor = currentDistance / previousDistance
-                                            val newScale = validateScale(transformState.scale * zoomFactor)
-                                            
-                                            // Calculate rotation
-                                            val previousAngle = atan2(
-                                                touchPoints[1].y - touchPoints[0].y,
-                                                touchPoints[1].x - touchPoints[0].x
-                                            )
-                                            val currentAngle = atan2(
-                                                secondPointer.y - firstPointer.y,
-                                                secondPointer.x - firstPointer.x
-                                            )
-                                            val angleChange = (currentAngle - previousAngle) * (180f / PI.toFloat())
-                                            val newRotation = (transformState.rotation + angleChange) % 360
-                                            
-                                            // Update with validated scale and consistent boundary checking
-                                            val updatedState = transformState.copy(
-                                                scale = newScale,
-                                                rotation = newRotation
-                                            )
-                                            
-                                            // FIXED: Consistent boundary validation using half-size
-                                            val newEmojiSize = emojiSticker.size * newScale
-                                            val halfSize = newEmojiSize / 2f
-                                            val maxX = (containerSize.x - halfSize).coerceAtLeast(halfSize)
-                                            val maxY = (containerSize.y - halfSize).coerceAtLeast(halfSize)
-                                            
-                                            transformState = updatedState.copy(
-                                                position = Offset(
-                                                    x = transformState.position.x.coerceIn(halfSize, maxX),
-                                                    y = transformState.position.y.coerceIn(halfSize, maxY)
-                                                )
-                                            )
-                                        }
-                                    }
-                                    
-                                    touchPoints = listOf(firstPointer, secondPointer)
-                                    // Only consume events when we actually process them
-                                    pointers.forEach { it.consume() }
-                                }
-                            }
-                            0 -> touchPoints = emptyList()
                         }
                     }
                 }
@@ -234,11 +169,52 @@ fun DraggableEmoji(
     ) {
         Text(
             text = emojiSticker.emoji,
-            fontSize = remember(emojiSize, density) { 
-                with(density) { (emojiSize * 0.8f).toSp() }
+            // Larger font size for better visibility and easier grabbing
+            fontSize = remember(transformState.scale) { 
+                // Direct calculation: 120dp base * scale * 0.9 for larger visual emoji
+                (EmojiSticker.DEFAULT_SIZE_DP * transformState.scale * 0.9f).sp
             },
-            modifier = Modifier.padding(8.dp)
+            modifier = Modifier.padding(2.dp) // Reduced padding for more emoji space
         )
+    }
+}
+
+/**
+ * Optimized boundary constraint calculations
+ */
+private data class BoundaryConstraints(
+    val containerSize: Offset,
+    val baseSize: Float,
+    val edgeThreshold: Float
+) {
+    fun validatePosition(position: Offset, currentSize: Float): Offset {
+        val halfSize = currentSize / 2f
+        val maxX = (containerSize.x - halfSize).coerceAtLeast(halfSize)
+        val maxY = (containerSize.y - halfSize).coerceAtLeast(halfSize)
+        
+        return Offset(
+            x = position.x.coerceIn(halfSize, maxX),
+            y = position.y.coerceIn(halfSize, maxY)
+        )
+    }
+    
+    fun isNearEdge(localPosition: Offset, stickerPosition: Offset, displaySize: Float): Boolean {
+        val globalX = stickerPosition.x + localPosition.x - displaySize / 2f
+        return globalX < edgeThreshold || globalX > containerSize.x - edgeThreshold
+    }
+    
+    // Renamed function to avoid overload ambiguity
+    fun isContainerEdge(position: Offset): Boolean {
+        return position.x < edgeThreshold || position.x > containerSize.x - edgeThreshold
+    }
+    
+    fun isEdgeSwipe(position: Offset, dragAmount: Offset): Boolean {
+        return abs(dragAmount.x) > abs(dragAmount.y) && isContainerEdge(position)
+    }
+    
+    fun getMaxScale(): Float {
+        val maxSizeForContainer = min(containerSize.x, containerSize.y) * 0.8f // Restored to 80%
+        return (maxSizeForContainer / baseSize).coerceAtMost(EmojiSticker.MAX_SCALE)
     }
 }
 
@@ -250,3 +226,5 @@ private data class TransformState(
     val scale: Float,
     val rotation: Float
 )
+
+
