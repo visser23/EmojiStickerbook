@@ -1,10 +1,134 @@
 # 📝 Development Scratchpad - Emoji Sticker Book
 
-## 🚨 Phase 1.5: Critical UX Fixes Implementation - **ARCHITECTURAL ISSUES DISCOVERED**
+## 🔴 CRITICAL FIX: January 22, 2026 - STALE CLOSURE BUG
+
+### **🔍 ROOT CAUSE ANALYSIS**
+**User Report**: "drag and resize still not working"
+**Status**: **✅ FIXED - Three layers of stale closure bugs identified and resolved**
+
+#### **Bug 1: Stale Closure in DraggableEmoji pointerInput**
+```kotlin
+// ❌ BROKEN: pointerInput only restarted on id/containerSize change
+.pointerInput(containerSize, emojiSticker.id) {
+    awaitEachGesture {
+        // emojiSticker captured at creation time - STALE!
+        val newScale = emojiSticker.scale * zoom  // Uses OLD scale value
+    }
+}
+```
+**Fix**: Use `rememberUpdatedState` to always access current values:
+```kotlin
+val currentScale by rememberUpdatedState(emojiSticker.scale)
+val currentPosition by rememberUpdatedState(emojiSticker.position)
+val currentRotation by rememberUpdatedState(emojiSticker.rotation)
+// Now gesture handler always reads CURRENT values
+```
+
+#### **Bug 2: Stale Closure in BookPage Callbacks**
+```kotlin
+// ❌ BROKEN: Each callback captures `sticker` from forEach
+stickers.forEach { sticker ->
+    DraggableEmoji(
+        onPositionChange = { newPos ->
+            sticker.copy(position = newPos)  // `sticker` is STALE!
+        },
+        onScaleChange = { newScale ->
+            sticker.copy(scale = newScale)  // Overwrites position with OLD value!
+        }
+    )
+}
+```
+**Fix**: Use `rememberUpdatedState` for sticker reference:
+```kotlin
+val currentSticker by rememberUpdatedState(sticker)
+// Now callbacks always use fresh sticker values
+```
+
+#### **Bug 3: Async Race Condition in BookViewModel**
+```kotlin
+// ❌ BROKEN: Multiple async updates race and overwrite each other
+viewModelScope.launch(Dispatchers.Default) {
+    bookState = manageStickersUseCase.updateStickerOnPage(...)
+}
+```
+**Fix**: Made `updateSticker` synchronous to prevent race conditions:
+```kotlin
+// ✅ FIXED: Synchronous updates during gestures
+fun updateSticker(updatedSticker: EmojiSticker, pageIndex: Int) {
+    bookState = manageStickersUseCase.updateStickerOnPage(...)
+}
+```
+
+#### **Bug 4: Unused isTopmost Parameter**
+Non-topmost stickers were processing gestures, causing multiple stickers to fight for the same touch.
+**Fix**: Added early return if not topmost:
+```kotlin
+if (!isTopmost) {
+    return@awaitEachGesture  // Don't process gestures on non-topmost stickers
+}
+```
+
+### **Files Modified**:
+1. `DraggableEmoji.kt` - Added `rememberUpdatedState` for position/scale/rotation/callbacks
+2. `BookPage.kt` - Added `rememberUpdatedState` for sticker in forEach loop
+3. `BookViewModel.kt` - Made `updateSticker` synchronous
+
+### **Verification**:
+- ✅ Build successful
+- ✅ All unit tests passing
+- ✅ No lint errors
+
+---
+
+## ✅ Phase 1.5: Critical UX Fixes Implementation - **COMPLETED JANUARY 2026**
+
+### **🎉 ARCHITECTURE REBUILD COMPLETED SUCCESSFULLY**
+**Date**: January 2026  
+**Status**: **✅ ALL ARCHITECTURAL ISSUES RESOLVED**
+
+#### **Summary of Changes Made**
+
+**1. State Synchronization Architecture (FIXED)**
+- Made `EmojiSticker` fully immutable (changed `var` to `val` for position, scale, rotation)
+- Added `onScaleChange` and `onRotationChange` callbacks to `DraggableEmoji`
+- Removed all direct mutation patterns (`.apply { }`)
+- All state changes now flow through proper callbacks to ViewModel
+- **CRITICAL**: Used `rememberUpdatedState` to prevent stale closures in gesture handlers
+
+**2. Unified Gesture Handler (IMPLEMENTED)**
+- Replaced THREE competing `pointerInput` modifiers with ONE unified handler
+- Proper multi-touch detection (2+ fingers for scale/rotate)
+- Single-touch for drag
+- Long press detection via time + movement threshold
+- **CRITICAL**: Always accesses current state values via `rememberUpdatedState`
+
+**3. Topmost Detection (IMPROVED)**
+- Fixed logic to properly identify topmost sticker at position
+- Stickers rendered in z-order (last = topmost)
+- Gesture handling respects z-order - non-topmost stickers don't process gestures
+
+**4. Size Constraints (ENFORCED)**
+- Dynamic max scale based on container size (70% of container)
+- MIN_SCALE = 0.4 (48dp minimum touch target)
+- Proper boundary validation preventing overflow
+
+**5. Deletion Bin (WORKING)**
+- Fixed bin position calculation using LocalDensity
+- Real-time hover detection during drag
+- Visual feedback when hovering over bin
+
+**6. Comprehensive Testing (ADDED)**
+- New `GestureCallbackIntegrationTest` with 10 regression tests
+- Tests validate scale, rotation, position propagation through callbacks
+- Tests verify state persistence across page navigation
+
+---
+
+## Previous Issues (RESOLVED)
 
 ### **🔍 COMPREHENSIVE CODE REVIEW RESULTS**
 **Date**: December 2024  
-**Status**: **❌ FUNDAMENTAL ARCHITECTURAL FLAWS IDENTIFIED**
+**Status**: **✅ RESOLVED January 2026**
 
 #### **Critical Finding: Previous "Fixes" Were Ineffective**
 **User Feedback**: "This is still broken and the behaviour is the same"

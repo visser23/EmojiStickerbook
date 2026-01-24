@@ -5,14 +5,18 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 
 /**
- * Represents an emoji sticker placed on a page
+ * Represents an emoji sticker placed on a page.
+ * 
+ * IMPORTANT: This is an IMMUTABLE data class. All properties are val.
+ * To update a sticker, use .copy() or the withXxx() helper methods.
+ * Never attempt direct mutation - it will cause state desynchronization.
  */
 data class EmojiSticker(
     val id: Long = System.currentTimeMillis(), // Unique ID for each sticker
     val emoji: String,                         // Unicode emoji character
-    var position: Offset,                      // Position on the page
-    var scale: Float = 1.0f,                   // Size scale factor
-    var rotation: Float = 0f,                  // Rotation in degrees
+    val position: Offset,                      // Position on the page (immutable)
+    val scale: Float = 1.0f,                   // Size scale factor (immutable)
+    val rotation: Float = 0f,                  // Rotation in degrees (immutable)
     val size: Float = 120.dp.value             // Base size of the emoji - optimized for touch targets
 ) {
     companion object {

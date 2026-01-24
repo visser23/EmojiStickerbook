@@ -125,36 +125,35 @@ class BookViewModel(
     }
     
     /**
-     * Performance-optimized sticker update
+     * Sticker update - MUST be synchronous to prevent race conditions during gestures.
+     * 
+     * CRITICAL FIX: Async updates caused race conditions where position/scale/rotation
+     * callbacks would complete out of order and overwrite each other's changes.
+     * During active gestures (drag, pinch, rotate), this is called many times per second
+     * and must update state immediately to ensure the next gesture event reads correct values.
      */
     fun updateSticker(updatedSticker: EmojiSticker, pageIndex: Int) {
-        if (testMode) {
-            // Synchronous execution for tests
+        try {
+            // DEBUG: Log incoming update
+            println("DEBUG ViewModel.updateSticker: id=${updatedSticker.id}, scale=${updatedSticker.scale}, rotation=${updatedSticker.rotation}, pos=${updatedSticker.position}")
+            
+            val oldSticker = bookState.pages.getOrNull(pageIndex)?.findStickerById(updatedSticker.id)
+            println("DEBUG ViewModel.updateSticker: old sticker scale=${oldSticker?.scale}, rotation=${oldSticker?.rotation}")
+            
+            // ALWAYS synchronous - this is critical for gesture responsiveness
+            // and preventing race conditions between position/scale/rotation updates
             bookState = manageStickersUseCase.updateStickerOnPage(
                 bookState = bookState,
                 updatedSticker = updatedSticker,
                 pageIndex = pageIndex
             )
+            
+            val newSticker = bookState.pages.getOrNull(pageIndex)?.findStickerById(updatedSticker.id)
+            println("DEBUG ViewModel.updateSticker: AFTER update, sticker scale=${newSticker?.scale}, rotation=${newSticker?.rotation}")
+            
             operationCount++
-        } else {
-            // Asynchronous execution for production
-            viewModelScope.launch(Dispatchers.Default) {
-                try {
-                    val newBookState = manageStickersUseCase.updateStickerOnPage(
-                        bookState = bookState,
-                        updatedSticker = updatedSticker,
-                        pageIndex = pageIndex
-                    )
-                    
-                    withContext(Dispatchers.Main) {
-                        bookState = newBookState
-                    }
-                    
-                    operationCount++
-                } catch (e: Exception) {
-                    handleError("updateSticker", e)
-                }
-            }
+        } catch (e: Exception) {
+            handleError("updateSticker", e)
         }
     }
     

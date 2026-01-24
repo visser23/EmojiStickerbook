@@ -1,230 +1,256 @@
 package io.github.storybookemoji.ui.components
 
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroidSize
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateRotation
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.storybookemoji.model.EmojiSticker
-import kotlin.math.*
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
- * Performance-optimized draggable emoji component with full gesture support.
+ * Draggable emoji component with LOCAL state tracking during gestures.
  * 
- * Key optimizations:
- * - Deferred state reads to minimize recompositions
- * - Efficient gesture handling with cached calculations
- * - Optimized boundary validation
- * - Multi-touch support for scaling and rotation
+ * KEY FIX: The previous implementation relied on rememberUpdatedState to get
+ * the current scale/rotation/position during gestures. But Compose doesn't
+ * recompose fast enough during rapid gesture events, so the state was always
+ * stale (always reading initial values like scale=1.0).
+ * 
+ * SOLUTION: Track scale/rotation/position LOCALLY during gestures, accumulating
+ * changes correctly. Sync with external state when gesture ends or when
+ * external state changes while not gesturing.
  */
 @Composable
 fun DraggableEmoji(
     emojiSticker: EmojiSticker,
     containerSize: Offset,
     isTopmost: Boolean = true,
-    onPositionChange: (Offset) -> Unit,
+    onStickerUpdate: (EmojiSticker) -> Unit,  // Single callback with complete sticker
     onDragStart: () -> Unit = {},
     onDragEnd: (Offset) -> Unit = {},
-    onRemove: () -> Unit
+    @Suppress("UNUSED_PARAMETER")
+    onRemove: () -> Unit  // Kept for API compatibility - deletion is via drag-to-bin only
 ) {
-    // Note: LocalDensity removed as it's not currently used in this optimized implementation
-    
-    // Performance optimization: Single state object to minimize recompositions
-    var transformState by remember {
-        mutableStateOf(
-            TransformState(
-                position = emojiSticker.position,
-                scale = emojiSticker.scale,
-                rotation = emojiSticker.rotation
-            )
-        )
-    }
-    
-    // Gesture coordination state
+    // LOCAL state - this is the source of truth DURING gestures
+    // These accumulate changes correctly without waiting for recomposition
+    var localScale by remember { mutableStateOf(emojiSticker.scale) }
+    var localRotation by remember { mutableStateOf(emojiSticker.rotation) }
+    var localPosition by remember { mutableStateOf(emojiSticker.position) }
     var isGestureActive by remember { mutableStateOf(false) }
     
-    // Deferred calculations - only computed when needed, not on every recomposition
-    val emojiSizePx = remember(transformState.scale) { 
-        emojiSticker.size * transformState.scale
-    }
-    
-    // Enhanced display size for better grabability - more generous sizing
-    val displaySizeDp = remember(transformState.scale) { 
-        // Direct calculation: 120dp base * scale * 1.6 multiplier for good touch targets
-        val baseSize = (EmojiSticker.DEFAULT_SIZE_DP * transformState.scale * 1.6f).dp
-        // Ensure minimum touch target compliance
-        baseSize.coerceAtLeast(EmojiSticker.MIN_TOUCH_TARGET_DP.dp)
-    }
-    
-    // Pre-calculated boundary constraints - computed once per container size change
-    val boundaryConstraints = remember(containerSize, emojiSticker.size) {
-        BoundaryConstraints(
-            containerSize = containerSize,
-            baseSize = emojiSticker.size,
-            edgeThreshold = containerSize.x * 0.15f
-        )
-    }
-    
-    // Optimized position validation - only when transform state changes
-    val validatedPosition = remember(transformState, boundaryConstraints) {
-        boundaryConstraints.validatePosition(transformState.position, emojiSizePx)
-    }
-    
-    // Scale validation function with dynamic max scale
-    val validateScale = remember(boundaryConstraints) {
-        { newScale: Float ->
-            val dynamicMaxScale = boundaryConstraints.getMaxScale()
-            newScale.coerceIn(EmojiSticker.MIN_SCALE, dynamicMaxScale)
+    // Sync local state with external state when NOT gesturing
+    // This handles: initial load, undo, page navigation, external updates
+    LaunchedEffect(emojiSticker.scale, emojiSticker.rotation, emojiSticker.position) {
+        if (!isGestureActive) {
+            localScale = emojiSticker.scale
+            localRotation = emojiSticker.rotation
+            localPosition = emojiSticker.position
+            DebugState.logEvent("Synced local state from external: scale=${emojiSticker.scale}, rot=${emojiSticker.rotation}")
         }
     }
     
-    // Efficient state synchronization - batched updates
-    LaunchedEffect(transformState) {
-        emojiSticker.apply {
-            scale = transformState.scale
-            rotation = transformState.rotation
-            position = validatedPosition
-        }
-        onPositionChange(validatedPosition)
+    // Callbacks - use rememberUpdatedState so we always call the latest callback
+    val currentOnStickerUpdate by rememberUpdatedState(onStickerUpdate)
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    val currentIsTopmost by rememberUpdatedState(isTopmost)
+    
+    // Calculate display size based on LOCAL scale (for immediate visual feedback)
+    val displaySizeDp = remember(localScale) { 
+        (EmojiSticker.DEFAULT_SIZE_DP * localScale * 1.6f).dp
+            .coerceAtLeast(EmojiSticker.MIN_TOUCH_TARGET_DP.dp)
     }
     
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            // Use lambda-based offset for performance - skips recomposition
-            .offset { 
-                IntOffset(
-                    validatedPosition.x.roundToInt(),
-                    validatedPosition.y.roundToInt()
-                )
-            }
-            .size(displaySizeDp)
-            .rotate(transformState.rotation)
-                        // Unified gesture handling - prevents conflicts between multiple gesture detectors
-            .pointerInput(containerSize, isTopmost) {
-                detectDragGestures(
-                    onDragStart = { 
-                        isGestureActive = true
-                        onDragStart()
-                    },
-                    onDragEnd = { 
-                        isGestureActive = false
-                        onDragEnd(transformState.position)
-                    },
-                    onDrag = { _, dragAmount ->
-                        if (!isGestureActive) return@detectDragGestures
-                        
-                        val newPosition = transformState.position + dragAmount
-                        val validatedNewPosition = boundaryConstraints.validatePosition(newPosition, emojiSizePx)
-                        
-                        transformState = transformState.copy(position = validatedNewPosition)
-                    }
-                )
-            }
-            .pointerInput(containerSize, isTopmost) {
-                detectTapGestures(
-                    onLongPress = { localPosition ->
-                        if (isTopmost && !boundaryConstraints.isNearEdge(localPosition, validatedPosition, displaySizeDp.toPx())) {
-                            onRemove()
-                        }
-                    }
-                )
-            }
-            .pointerInput(containerSize, isTopmost) {
-                // Only handle transform gestures for topmost stickers
-                if (isTopmost) {
-                    detectTransformGestures(
-                        panZoomLock = false // Allow panning during scaling
-                    ) { _, pan, zoom, rotation ->
-                        val currentScale = transformState.scale
-                        val newScale = validateScale(currentScale * zoom)
-                        
-                        // Update transform state if scaling or rotation occurred
-                        if (newScale != currentScale || rotation != 0f) {
-                            val newPosition = transformState.position + pan
-                            val validatedNewPosition = boundaryConstraints.validatePosition(newPosition, emojiSticker.size * newScale)
-                            
-                            transformState = transformState.copy(
-                                scale = newScale,
-                                position = validatedNewPosition,
-                                rotation = transformState.rotation + rotation
-                            )
-                        }
-                    }
-                }
-            }
-    ) {
-        Text(
-            text = emojiSticker.emoji,
-            // Larger font size for better visibility and easier grabbing
-            fontSize = remember(transformState.scale) { 
-                // Direct calculation: 120dp base * scale * 0.9 for larger visual emoji
-                (EmojiSticker.DEFAULT_SIZE_DP * transformState.scale * 0.9f).sp
-            },
-            modifier = Modifier.padding(2.dp) // Reduced padding for more emoji space
-        )
+    // Calculate font size based on LOCAL scale
+    val fontSize = remember(localScale) {
+        (EmojiSticker.DEFAULT_SIZE_DP * localScale * 0.9f).sp
     }
-}
-
-/**
- * Optimized boundary constraint calculations
- */
-private data class BoundaryConstraints(
-    val containerSize: Offset,
-    val baseSize: Float,
-    val edgeThreshold: Float
-) {
-    fun validatePosition(position: Offset, currentSize: Float): Offset {
-        val halfSize = currentSize / 2f
+    
+    // Calculate max scale dynamically
+    val dynamicMaxScale = remember(containerSize, emojiSticker.size) {
+        if (containerSize.x > 0 && containerSize.y > 0) {
+            val maxDimension = min(containerSize.x, containerSize.y)
+            val maxAllowedSize = maxDimension * 0.7f
+            (maxAllowedSize / emojiSticker.size).coerceIn(EmojiSticker.MIN_SCALE, EmojiSticker.MAX_SCALE)
+        } else {
+            EmojiSticker.MAX_SCALE
+        }
+    }
+    
+    fun validatePosition(position: Offset, scale: Float): Offset {
+        val halfSize = (emojiSticker.size * scale) / 2f
         val maxX = (containerSize.x - halfSize).coerceAtLeast(halfSize)
         val maxY = (containerSize.y - halfSize).coerceAtLeast(halfSize)
-        
         return Offset(
             x = position.x.coerceIn(halfSize, maxX),
             y = position.y.coerceIn(halfSize, maxY)
         )
     }
     
-    fun isNearEdge(localPosition: Offset, stickerPosition: Offset, displaySize: Float): Boolean {
-        val globalX = stickerPosition.x + localPosition.x - displaySize / 2f
-        return globalX < edgeThreshold || globalX > containerSize.x - edgeThreshold
+    fun validateScale(scale: Float): Float {
+        return scale.coerceIn(EmojiSticker.MIN_SCALE, dynamicMaxScale)
     }
     
-    // Renamed function to avoid overload ambiguity
-    fun isContainerEdge(position: Offset): Boolean {
-        return position.x < edgeThreshold || position.x > containerSize.x - edgeThreshold
-    }
-    
-    fun isEdgeSwipe(position: Offset, dragAmount: Offset): Boolean {
-        return abs(dragAmount.x) > abs(dragAmount.y) && isContainerEdge(position)
-    }
-    
-    fun getMaxScale(): Float {
-        val maxSizeForContainer = min(containerSize.x, containerSize.y) * 0.8f // Restored to 80%
-        return (maxSizeForContainer / baseSize).coerceAtMost(EmojiSticker.MAX_SCALE)
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            // Use LOCAL position for immediate visual feedback
+            .offset { 
+                IntOffset(
+                    localPosition.x.roundToInt(),
+                    localPosition.y.roundToInt()
+                )
+            }
+            .size(displaySizeDp)
+            // Use LOCAL rotation for immediate visual feedback
+            .rotate(localRotation)
+            .pointerInput(emojiSticker.id, containerSize) {
+                awaitEachGesture {
+                    val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    
+                    if (!currentIsTopmost) {
+                        DebugState.logEvent("Ignoring touch - not topmost")
+                        return@awaitEachGesture
+                    }
+                    
+                    DebugState.logEvent("Touch DOWN at ${firstDown.position}")
+                    
+                    // Mark gesture as active - this prevents external sync from overwriting local state
+                    isGestureActive = true
+                    currentOnDragStart()
+                    DebugState.logEvent("Gesture START - local state: scale=$localScale, rot=$localRotation")
+                    
+                    var pastTouchSlop = false
+                    val touchSlop = viewConfiguration.touchSlop
+                    var lockedToPanZoom = false
+                    
+                    // Accumulators for touch slop detection
+                    var accumulatedZoom = 1f
+                    var accumulatedRotation = 0f
+                    var accumulatedPan = Offset.Zero
+                    
+                    do {
+                        val event = awaitPointerEvent()
+                        val canceled = event.changes.any { change: PointerInputChange -> change.isConsumed }
+                        
+                        if (!canceled) {
+                            val zoomChange = event.calculateZoom()
+                            val rotationChange = event.calculateRotation()
+                            val panChange = event.calculatePan()
+                            
+                            val pointerCount = event.changes.count { change: PointerInputChange -> change.pressed }
+                            DebugState.logGesture(
+                                type = if (pointerCount >= 2) "Multi($pointerCount)" else "Single",
+                                pointers = pointerCount,
+                                zoom = zoomChange,
+                                rotation = rotationChange,
+                                panX = panChange.x,
+                                panY = panChange.y
+                            )
+                            
+                            if (!pastTouchSlop) {
+                                accumulatedZoom *= zoomChange
+                                accumulatedRotation += rotationChange
+                                accumulatedPan += panChange
+                                
+                                val centroidSize = event.calculateCentroidSize(useCurrent = false)
+                                val zoomMotion = abs(1f - accumulatedZoom) * centroidSize
+                                val rotationMotion = abs(accumulatedRotation * PI.toFloat() * centroidSize / 180f)
+                                val panMotion = accumulatedPan.getDistance()
+                                
+                                if (zoomMotion > touchSlop || rotationMotion > touchSlop || panMotion > touchSlop) {
+                                    pastTouchSlop = true
+                                    lockedToPanZoom = (zoomMotion > rotationMotion) || (panMotion > rotationMotion)
+                                    DebugState.logEvent("Past touch slop - gesture active, lockedToPanZoom=$lockedToPanZoom")
+                                }
+                            }
+                            
+                            if (pastTouchSlop) {
+                                val effectiveRotation = if (lockedToPanZoom) 0f else rotationChange
+                                var stateChanged = false
+                                
+                                // Apply scale - accumulate on LOCAL state
+                                if (zoomChange != 1f) {
+                                    val newScale = validateScale(localScale * zoomChange)
+                                    DebugState.logEvent("SCALE: local=${"%.3f".format(localScale)} * zoom=${"%.3f".format(zoomChange)} = ${"%.3f".format(newScale)}")
+                                    localScale = newScale
+                                    stateChanged = true
+                                }
+                                
+                                // Apply rotation - accumulate on LOCAL state
+                                if (effectiveRotation != 0f) {
+                                    val newRotation = localRotation + effectiveRotation
+                                    DebugState.logEvent("ROTATE: local=${"%.1f".format(localRotation)} + ${"%.1f".format(effectiveRotation)} = ${"%.1f".format(newRotation)}")
+                                    localRotation = newRotation
+                                    stateChanged = true
+                                }
+                                
+                                // Apply pan - accumulate on LOCAL state
+                                if (panChange != Offset.Zero) {
+                                    val newPos = validatePosition(localPosition + panChange, localScale)
+                                    localPosition = newPos
+                                    stateChanged = true
+                                }
+                                
+                                // Send COMPLETE sticker with ALL local state to ViewModel
+                                // This prevents stale closure issues where separate callbacks
+                                // would overwrite each other's changes
+                                if (stateChanged) {
+                                    val updatedSticker = emojiSticker.copy(
+                                        position = localPosition,
+                                        scale = localScale,
+                                        rotation = localRotation
+                                    )
+                                    DebugState.logEvent("UPDATE: sending complete sticker - scale=${"%.3f".format(localScale)}, rot=${"%.1f".format(localRotation)}")
+                                    currentOnStickerUpdate(updatedSticker)
+                                }
+                                
+                                event.changes.forEach { change: PointerInputChange -> 
+                                    if (change.positionChanged()) {
+                                        change.consume()
+                                    }
+                                }
+                            }
+                        }
+                    } while (!canceled && event.changes.any { change: PointerInputChange -> change.pressed })
+                    
+                    // Gesture ended
+                    isGestureActive = false
+                    DebugState.logEvent("Gesture END - final local state: scale=$localScale, rot=$localRotation, pos=$localPosition")
+                    currentOnDragEnd(localPosition)
+                }
+            }
+    ) {
+        Text(
+            text = emojiSticker.emoji,
+            fontSize = fontSize,
+            modifier = Modifier.padding(2.dp)
+        )
     }
 }
-
-/**
- * Consolidated transform state to minimize recompositions
- */
-private data class TransformState(
-    val position: Offset,
-    val scale: Float,
-    val rotation: Float
-)
-
-
